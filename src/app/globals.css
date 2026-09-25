@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --color-brand-50: #eef7fe;
+  --color-brand-100: #d8ecfc;
+  --color-brand-200: #b3dbf9;
+  --color-brand-300: #7fc3f4;
+  --color-brand-400: #43a6ec;
+  --color-brand-500: #1a8fe3;
+  --color-brand-600: #0d72c4;
+  --color-brand-700: #0c5b9e;
+  --color-brand-800: #104d82;
+  --color-brand-900: #12406b;
+}
+
+:root {
+  color-scheme: light;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased;
+  font-feature-settings: "cv11", "ss01";
+}
+
+/* Focus rings that are visible for keyboard users only */
+:focus-visible {
+  outline: 2px solid var(--color-brand-500);
+  outline-offset: 2px;
+}
+
+/* Tabular numbers for money */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Thin scrollbars on the production board */
+.scroll-thin {
+  scrollbar-width: thin;
+}

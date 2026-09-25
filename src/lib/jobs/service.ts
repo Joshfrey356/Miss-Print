@@ -1,0 +1,301 @@
+import "server-only";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { db, type Tx } from "@/lib/db";
+import {
+  customers,
+  files,
+  jobItems,
+  jobStatusHistory,
+  jobs,
+  locations,
+  productCategories,
+  quoteItems,
+  quotes,
+  type Job,
+  type JobStatus,
+} from "@/lib/db/schema";
+import { logActivity } from "@/lib/activity";
+import { notify } from "@/lib/notifications";
+import { jobNo, today } from "@/lib/format";
+import { STATUS_LABELS, afterApproval } from "@/lib/jobs/workflow";
+import { taxFor } from "@/lib/pricing/engine";
+
+type Actor = { id: number; name: string };
+
+/** Statuses at which the job is handed to the production location of its category. */
+const PRODUCTION_HANDOFF: JobStatus[] = ["approved_for_production", "production"];
+
+/**
+ * THE one place job status changes. Records history + activity, hands the job
+ * to the right location, stamps completion, and notifies the people who need to know.
+ */
+export async function changeJobStatus(
+  tx: Tx,
+  job: Pick<Job, "id" | "number" | "status" | "categoryId" | "locationId" | "designerId" | "productionId" | "installerId" | "salespersonId" | "title">,
+  to: JobStatus,
+  actor: Actor | null,
+  opts: { note?: string; reason?: string } = {},
+) {
+  if (job.status === to) return;
+  const patch: Partial<typeof jobs.$inferInsert> = { status: to, updatedAt: new Date() };
+
+  // Location handoff: e.g. Munster intake → Hammond production for signs.
+  if (PRODUCTION_HANDOFF.includes(to) && job.categoryId) {
+    const [cat] = await tx
+      .select({ loc: productCategories.defaultLocationId })
+      .from(productCategories)
+      .where(eq(productCategories.id, job.categoryId));
+    if (cat?.loc && cat.loc !== job.locationId) {
+      patch.locationId = cat.loc;
+      const [loc] = await tx.select({ name: locations.name }).from(locations).where(eq(locations.id, cat.loc));
+      await logActivity(
+        { action: "job.location_changed", entityType: "job", entityId: job.id, jobId: job.id, actorId: actor?.id, summary: `Handed off to ${loc?.name ?? "production"}` },
+        tx,
+      );
+    }
+  }
+  if (to === "completed") patch.completedAt = new Date();
+  else if (job.status === "completed") patch.completedAt = null;
+
+  await tx.update(jobs).set(patch).where(eq(jobs.id, job.id));
+  await tx.insert(jobStatusHistory).values({ jobId: job.id, fromStatus: job.status, toStatus: to, changedBy: actor?.id ?? null, note: opts.note ?? null });
+  await logActivity(
+    {
+      action: "job.status_changed",
+      entityType: "job",
+      entityId: job.id,
+      jobId: job.id,
+      actorId: actor?.id,
+      summary: `${STATUS_LABELS[job.status]} → ${STATUS_LABELS[to]}${opts.reason ? ` (${opts.reason})` : ""}`,
+      data: { before: { status: job.status }, after: { status: to } },
+    },
+    tx,
+  );
+
+  // Tell the next person in line.
+  const link = `/jobs/${job.number}`;
+  const label = `${jobNo(job.number)} ${job.title}`;
+  const who =
+    to === "design" ? [job.designerId] :
+    to === "approved_for_production" ? [job.productionId] :
+    to === "scheduled_install" ? [job.installerId] :
+    ["ready_pickup", "scheduled_delivery"].includes(to) ? [job.salespersonId] : [];
+  if (who.length)
+    await notify(
+      { userIds: who, kind: "assigned", title: `${label} is now ${STATUS_LABELS[to]}`, link, actorId: actor?.id ?? null },
+      tx,
+    );
+}
+
+/** Recalculate job money totals from its line items. */
+export async function recalcJobTotals(tx: Tx, jobId: number) {
+  const [row] = await tx
+    .select({ taxExempt: customers.taxExempt, taxRate: jobs.taxRate })
+    .from(jobs)
+    .innerJoin(customers, eq(customers.id, jobs.customerId))
+    .where(eq(jobs.id, jobId));
+  const items = await tx
+    .select({ price: jobItems.priceCents, cost: jobItems.estimatedCostCents, taxable: jobItems.taxable })
+    .from(jobItems)
+    .where(eq(jobItems.jobId, jobId));
+  const subtotal = items.reduce((a, i) => a + i.price, 0);
+  const taxable = items.filter((i) => i.taxable).reduce((a, i) => a + i.price, 0);
+  const tax = taxFor(taxable, row?.taxRate ?? 0, row?.taxExempt ?? false);
+  await tx
+    .update(jobs)
+    .set({
+      subtotalCents: subtotal,
+      taxCents: tax,
+      totalCents: subtotal + tax,
+      estimatedCostCents: items.reduce((a, i) => a + i.cost, 0),
+      updatedAt: new Date(),
+    })
+    .where(eq(jobs.id, jobId));
+}
+
+/** One click: quote → job. Everything carries over; nobody re-types anything. */
+export async function convertQuoteToJob(quoteId: number, actor: Actor): Promise<{ number: number }> {
+  return db.transaction(async (tx) => {
+    const [q] = await tx.select().from(quotes).where(eq(quotes.id, quoteId)).for("update");
+    if (!q) throw new Error("Quote not found");
+    const existing = await tx.select({ number: jobs.number }).from(jobs).where(eq(jobs.quoteId, q.id)).limit(1);
+    if (existing[0]) return existing[0];
+
+    const items = await tx.select().from(quoteItems).where(eq(quoteItems.quoteId, q.id)).orderBy(asc(quoteItems.sortOrder));
+    const mainCat = items[0]?.categoryId ?? null;
+    const [cat] = mainCat ? await tx.select().from(productCategories).where(eq(productCategories.id, mainCat)) : [];
+    const quoteFiles = await tx.select({ id: files.id }).from(files).where(eq(files.quoteId, q.id));
+    const needsProof = cat?.defaultNeedsProof ?? true;
+    const fulfillment = q.needsInstall ? ("install" as const) : ("pickup" as const);
+    const start = afterApproval({ status: "approved", needsDesign: q.needsDesign, needsProof, needsInstall: q.needsInstall, fulfillment, hasArtwork: quoteFiles.length > 0 });
+
+    const [job] = await tx
+      .insert(jobs)
+      .values({
+        customerId: q.customerId,
+        contactId: q.contactId,
+        quoteId: q.id,
+        title: q.title,
+        categoryId: mainCat,
+        description: q.customerNotes,
+        status: start,
+        priority: q.isRush ? "rush" : "normal",
+        locationId: q.locationId ?? cat?.defaultLocationId ?? null,
+        fulfillment,
+        needsDesign: q.needsDesign,
+        needsProof,
+        needsInstall: q.needsInstall,
+        salespersonId: q.salespersonId,
+        dueDate: q.dueDate,
+        subtotalCents: q.subtotalCents,
+        taxRate: q.taxRate,
+        taxCents: q.taxCents,
+        totalCents: q.totalCents,
+        estimatedCostCents: q.estimatedCostCents,
+        internalNotes: q.internalNotes,
+        createdBy: actor.id,
+      })
+      .returning();
+    if (items.length)
+      await tx.insert(jobItems).values(
+        items.map((i) => ({
+          jobId: job!.id,
+          categoryId: i.categoryId,
+          description: i.description,
+          quantity: i.quantity,
+          widthIn: i.widthIn,
+          heightIn: i.heightIn,
+          materialId: i.materialId,
+          material: i.material,
+          finishing: i.finishing,
+          colors: i.colors,
+          specs: i.specs,
+          pricingInput: i.pricingInput,
+          recommendedCents: i.recommendedCents,
+          priceCents: i.priceCents,
+          overrideReason: i.overrideReason,
+          estimatedCostCents: i.estimatedCostCents,
+          taxable: i.taxable,
+          sortOrder: i.sortOrder,
+        })),
+      );
+    // Quote files move with the job (customer artwork).
+    if (quoteFiles.length)
+      await tx.update(files).set({ jobId: job!.id }).where(inArray(files.id, quoteFiles.map((f) => f.id)));
+    await tx.update(quotes).set({ status: "converted", respondedAt: q.respondedAt ?? new Date(), updatedAt: new Date() }).where(eq(quotes.id, q.id));
+    await tx.insert(jobStatusHistory).values({ jobId: job!.id, fromStatus: null, toStatus: start, changedBy: actor.id, note: "Created from quote" });
+    await logActivity({ action: "job.created", entityType: "job", entityId: job!.id, jobId: job!.id, customerId: q.customerId, quoteId: q.id, actorId: actor.id, summary: `Created from quote Q-${q.number}` }, tx);
+    await logActivity({ action: "quote.converted", entityType: "quote", entityId: q.id, quoteId: q.id, customerId: q.customerId, jobId: job!.id, actorId: actor.id, summary: `Converted to job ${jobNo(job!.number)}` }, tx);
+    return { number: job!.number };
+  });
+}
+
+export type ReorderOptions = {
+  sameQuantity: boolean;
+  quantity?: number;
+  sameArtwork: boolean;
+  sameSpecs: boolean;
+  dueDate: string | null;
+  priceCents?: number | null; // new total for the (single) line when updated
+  notes?: string | null;
+};
+
+/** Duplicate a past job as a new one, keeping specs, artwork, materials, price and customer. */
+export async function reorderJob(sourceJobId: number, opts: ReorderOptions, actor: Actor): Promise<{ number: number }> {
+  return db.transaction(async (tx) => {
+    const [src] = await tx.select().from(jobs).where(eq(jobs.id, sourceJobId));
+    if (!src) throw new Error("Job not found");
+    const items = await tx.select().from(jobItems).where(eq(jobItems.jobId, src.id)).orderBy(asc(jobItems.sortOrder));
+    const artwork = opts.sameArtwork
+      ? await tx
+          .select()
+          .from(files)
+          .where(and(eq(files.jobId, src.id), inArray(files.folder, ["original_artwork", "production", "working", "customer"]), sql`${files.archivedAt} is null`))
+      : [];
+    // Same artwork & specs → skip design/proof and go straight to production.
+    const straight = opts.sameArtwork && opts.sameSpecs;
+    const status: JobStatus = straight ? "approved_for_production" : opts.sameArtwork ? (src.needsProof ? "proof_ready" : "approved_for_production") : "waiting_artwork";
+
+    const [job] = await tx
+      .insert(jobs)
+      .values({
+        customerId: src.customerId,
+        contactId: src.contactId,
+        reorderOfJobId: src.id,
+        title: src.title.startsWith("Reorder") || src.title.startsWith("Repeat") ? src.title : `Reorder: ${src.title}`,
+        categoryId: src.categoryId,
+        description: src.description,
+        status,
+        priority: "normal",
+        locationId: src.locationId,
+        fulfillment: src.fulfillment,
+        needsDesign: opts.sameArtwork ? false : src.needsDesign,
+        needsProof: straight ? false : src.needsProof,
+        needsInstall: src.needsInstall,
+        salespersonId: src.salespersonId,
+        designerId: src.designerId,
+        productionId: src.productionId,
+        installerId: src.installerId,
+        dueDate: opts.dueDate,
+        siteAddress: src.siteAddress,
+        taxRate: src.taxRate,
+        internalNotes: [opts.notes, `Reorder of ${jobNo(src.number)}.`].filter(Boolean).join("\n"),
+        customerNotes: src.customerNotes,
+        createdBy: actor.id,
+      })
+      .returning();
+
+    const qtyFactor = !opts.sameQuantity && opts.quantity && items.length === 1 && items[0]!.quantity > 0 ? opts.quantity / items[0]!.quantity : 1;
+    if (items.length)
+      await tx.insert(jobItems).values(
+        items.map((i, idx) => {
+          const qty = !opts.sameQuantity && opts.quantity && items.length === 1 ? opts.quantity : i.quantity;
+          const price = idx === 0 && opts.priceCents != null ? opts.priceCents : Math.round(i.priceCents * qtyFactor);
+          return {
+            jobId: job!.id,
+            categoryId: i.categoryId,
+            description: i.description.replace(/^\d[\d,]*\b/, qty.toLocaleString()),
+            quantity: qty,
+            widthIn: i.widthIn,
+            heightIn: i.heightIn,
+            materialId: i.materialId,
+            material: i.material,
+            finishing: i.finishing,
+            colors: i.colors,
+            specs: i.specs,
+            pricingInput: i.pricingInput,
+            recommendedCents: i.recommendedCents,
+            priceCents: price,
+            overrideReason: price !== i.priceCents ? `Reorder of ${jobNo(src.number)} (was $${(i.priceCents / 100).toFixed(2)})` : null,
+            estimatedCostCents: Math.round(i.estimatedCostCents * qtyFactor),
+            taxable: i.taxable,
+            sortOrder: i.sortOrder,
+          };
+        }),
+      );
+    // Link the same artwork files (copy rows pointing to the same stored object; originals untouched).
+    if (artwork.length)
+      await tx.insert(files).values(
+        artwork.map((f) => ({
+          jobId: job!.id,
+          customerId: f.customerId,
+          folder: f.folder,
+          filename: f.filename,
+          storageKey: f.storageKey,
+          mimeType: f.mimeType,
+          sizeBytes: f.sizeBytes,
+          preflightStatus: f.preflightStatus,
+          preflight: f.preflight,
+          uploadedBy: actor.id,
+        })),
+      );
+    await recalcJobTotals(tx, job!.id);
+    await tx.insert(jobStatusHistory).values({ jobId: job!.id, fromStatus: null, toStatus: status, changedBy: actor.id, note: `Reorder of ${jobNo(src.number)}` });
+    await logActivity({ action: "job.created", entityType: "job", entityId: job!.id, jobId: job!.id, customerId: src.customerId, actorId: actor.id, summary: `Reordered from ${jobNo(src.number)}` }, tx);
+    await logActivity({ action: "job.reordered", entityType: "job", entityId: src.id, jobId: src.id, customerId: src.customerId, actorId: actor.id, summary: `Reordered as ${jobNo(job!.number)}` }, tx);
+    return { number: job!.number };
+  });
+}
+
+export const isOverdue = (j: { dueDate: string | null; status: JobStatus }) =>
+  !!j.dueDate && j.dueDate < today() && !["completed", "cancelled", "on_hold"].includes(j.status);
