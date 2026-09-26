@@ -394,7 +394,7 @@ export async function getCustomerFiles(customerId: number) {
     .limit(500);
 }
 
-export async function getCustomerCommunications(customerId: number, opts: { showMoney: boolean }) {
+export async function getCustomerCommunications(customerId: number, opts: { showMoney: boolean; showPrices?: boolean }) {
   return db
     .select({
       id: communications.id,
@@ -416,14 +416,16 @@ export async function getCustomerCommunications(customerId: number, opts: { show
         eq(communications.customerId, customerId),
         // Invoice emails/reminders contain amounts — hide them from roles that can't see money.
         opts.showMoney ? undefined : isNull(communications.invoiceId),
+        // Quote emails list every price — hide them from roles without financials.view.
+        opts.showPrices ? undefined : isNull(communications.quoteId),
       ),
     )
     .orderBy(desc(communications.createdAt))
     .limit(200);
 }
 
-export async function getCustomerActivity(customerId: number, opts: { showMoney: boolean; limit?: number }) {
-  return db
+export async function getCustomerActivity(customerId: number, opts: { showMoney: boolean; showCost?: boolean; limit?: number }) {
+  const rows = await db
     .select({
       id: activityLogs.id,
       action: activityLogs.action,
@@ -443,10 +445,14 @@ export async function getCustomerActivity(customerId: number, opts: { showMoney:
         opts.showMoney
           ? undefined
           : sql`not (${activityLogs.entityType} in ('invoice','payment','expense') or ${activityLogs.action} ilike '%price%' or ${activityLogs.action} ilike '%payment%' or ${activityLogs.action} ilike '%invoice%')`,
+        // Expenses are costs (margins.view), even for people who can see prices.
+        opts.showCost ? undefined : sql`${activityLogs.entityType} <> 'expense'`,
       ),
     )
     .orderBy(desc(activityLogs.createdAt))
     .limit(opts.limit ?? 15);
+  // Some summaries carry an amount ("Created quote for $120.00").
+  return opts.showMoney ? rows : rows.map((r) => ({ ...r, summary: r.summary.replace(/\s*(?:for\s+)?\(?-?\$[\d,]+(?:\.\d+)?\)?/g, "") }));
 }
 
 // ---------------------------------------------------------------------------

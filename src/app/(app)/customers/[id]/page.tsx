@@ -48,6 +48,7 @@ export default async function CustomerPage({
 
   const can = {
     money: userCan(user, "financials.view"),
+    cost: userCan(user, "margins.view"),
     invoices: userCan(user, "money.view"),
     edit: userCan(user, "customers.edit"),
     quotes: userCan(user, "quotes.view"),
@@ -222,7 +223,7 @@ export default async function CustomerPage({
       {tab === "quotes" && <QuotesTable customerId={id} showMoney={can.money} canCreate={can.newQuote && !archived} />}
       {tab === "invoices" && <InvoicesTab customerId={id} />}
       {tab === "files" && <FilesTab customerId={id} canUpload={can.upload} />}
-      {tab === "messages" && <MessagesTab customerId={id} canLog={can.edit} showMoney={can.invoices} />}
+      {tab === "messages" && <MessagesTab customerId={id} canLog={can.edit} showMoney={can.invoices} showPrices={can.money} />}
     </>
   );
 }
@@ -253,7 +254,7 @@ async function Overview({
   archived,
 }: {
   id: number;
-  can: { money: boolean; edit: boolean; quotes: boolean; newQuote: boolean; jobs: boolean; newJob: boolean };
+  can: { money: boolean; cost: boolean; edit: boolean; quotes: boolean; newQuote: boolean; jobs: boolean; newJob: boolean };
   notes: string | null;
   billingAddress: string | null;
   archived: boolean;
@@ -263,7 +264,7 @@ async function Overview({
     can.jobs ? getCustomerJobs(id, { showMoney: can.money, sort: "created", dir: "desc" }) : Promise.resolve([]),
     can.quotes ? getCustomerQuotes(id, { showMoney: can.money, openOnly: true }) : Promise.resolve([]),
     getContacts(id),
-    getCustomerActivity(id, { showMoney: can.money, limit: 8 }),
+    getCustomerActivity(id, { showMoney: can.money, showCost: can.cost, limit: 8 }),
   ]);
   const completed = pastJobs.filter((j) => j.status === "completed").slice(0, 5);
   return (

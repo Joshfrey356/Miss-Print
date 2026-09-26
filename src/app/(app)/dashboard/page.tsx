@@ -181,7 +181,8 @@ export default async function DashboardPage() {
             <MoneyTile label="Cash collected this month" value={moneyShort(cards.cashMonth)} />
             <MoneyTile label="Outstanding invoices" value={moneyShort(cards.outstanding)} sub={`${cards.outstandingCount} unpaid`} href="/money?tab=receivables" />
             <MoneyTile label="Open quotes" value={moneyShort(cards.openQuotesValue)} sub={`${cards.openQuotes} quotes · estimated value`} href="/quotes" />
-            <MoneyTile label="Expenses this month" value={moneyShort(cards.expensesMonth)} href="/money?tab=expenses" />
+            {/* Expenses are costs: not for managers (margins.view). */}
+            {can(r, "margins.view") && <MoneyTile label="Expenses this month" value={moneyShort(cards.expensesMonth)} href="/money?tab=expenses" />}
             {can(r, "margins.view") && <MoneyTile label="Est. gross profit this month" value={moneyShort(cards.grossProfitMonth)} sub={cards.salesMonth ? `${pct(cards.grossProfitMonth / cards.salesMonth)} of sales` : undefined} />}
           </div>
         </div>

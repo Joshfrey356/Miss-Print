@@ -213,7 +213,7 @@ export async function listJobs(f: JobFilter, user: SessionUser) {
     f.sort === "number" ? [dir(jobs.number)] :
     f.sort === "customer" ? [dir(customers.name)] :
     f.sort === "status" ? [dir(jobs.status)] :
-    f.sort === "total" ? [dir(jobs.totalCents)] :
+    f.sort === "total" && can(user.role, "financials.view") ? [dir(jobs.totalCents)] :
     f.sort === "created" ? [dir(jobs.createdAt)] :
     (f.view === "completed" || f.view === "all") && !f.sort ? [desc(jobs.completedAt), desc(jobs.number)] :
     [sql`${jobs.dueDate} ${f.dir === "desc" ? sql`desc` : sql`asc`} nulls last`, desc(jobs.priority), asc(jobs.number)];
@@ -333,16 +333,22 @@ export async function getJobDetail(number: number, user: SessionUser) {
     estimatedCostCents: showCost ? i.estimatedCostCents : 0,
     pricingInput: showCost ? i.pricingInput : null,
   }));
+  const MONEY_ACTIONS = ["quote.price_changed", "job.price_changed", "invoice.created", "invoice.reminder_sent", "payment.received", "invoice.voided", "payment.voided"];
+  // Expenses are costs: hidden from everyone without margins.view (incl. managers/sales).
+  const COST_ACTIONS = ["expense.created", "expense.updated", "expense.archived"];
   const cleanActivity = activity
-    .filter((a) => showMoney || !["quote.price_changed", "job.price_changed", "invoice.created", "payment.received", "invoice.voided", "payment.voided", "expense.created"].includes(a.action))
-    .map((a) => ({ ...a, data: showMoney ? a.data : null }));
+    .filter((a) => (showMoney || !MONEY_ACTIONS.includes(a.action)) && (showCost || !COST_ACTIONS.includes(a.action)))
+    // Some summaries carry an amount, e.g. "Added item: Banner ($120.00)".
+    .map((a) => ({ ...a, summary: showMoney ? a.summary : a.summary.replace(/\s*\(-?\$[\d,]+(?:\.\d+)?\)/g, ""), data: showMoney && showCost ? a.data : null }));
+  // The token hash never needs to leave the server.
+  const cleanProofs = proofRows.map(({ proof: { tokenHash: _t, ...proof }, ...rest }) => ({ ...rest, proof }));
 
   return {
     ...row,
     job,
     items: cleanItems,
     files: fileRows,
-    proofs: proofRows,
+    proofs: cleanProofs,
     history,
     activity: cleanActivity,
     invoices: invoiceRows,

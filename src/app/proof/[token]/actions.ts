@@ -1,7 +1,7 @@
 "use server";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { communications, jobs, proofs } from "@/lib/db/schema";
@@ -41,8 +41,9 @@ export async function respondToProof(token: string, _prev: ProofResponseState, f
   const approved = decision === "approve";
   const who = base.data.name;
 
-  await db.transaction(async (tx) => {
-    await tx
+  const answered = await db.transaction(async (tx) => {
+    // Only a still-"sent" proof can be answered; guards against double submits / replays racing the check above.
+    const [updated] = await tx
       .update(proofs)
       .set({
         status: approved ? "approved" : "changes_requested",
@@ -54,7 +55,9 @@ export async function respondToProof(token: string, _prev: ProofResponseState, f
         customerComment: comment || null,
         approvalStatement: approved ? APPROVAL_STATEMENT : null,
       })
-      .where(eq(proofs.id, row.proof.id));
+      .where(and(eq(proofs.id, row.proof.id), eq(proofs.status, "sent")))
+      .returning({ id: proofs.id });
+    if (!updated) return false;
     await tx.insert(communications).values({
       customerId: row.job.customerId,
       jobId: row.job.id,
@@ -95,7 +98,9 @@ export async function respondToProof(token: string, _prev: ProofResponseState, f
       },
       tx,
     );
+    return true;
   });
+  if (!answered) return { error: "This proof has already been answered or replaced." };
   revalidatePath(`/jobs/${row.job.number}`);
   return { ok: true };
 }

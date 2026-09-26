@@ -484,8 +484,8 @@ const CHANNEL: Record<string, { label: (dir: string) => string; icon: typeof Mai
   sms: { label: (d) => (d === "inbound" ? "Text received" : "Text sent"), icon: MessageSquare, tone: "bg-violet-50 text-violet-700" },
 };
 
-export async function MessagesTab({ customerId, canLog, showMoney }: { customerId: number; canLog: boolean; showMoney: boolean }) {
-  const items = await getCustomerCommunications(customerId, { showMoney });
+export async function MessagesTab({ customerId, canLog, showMoney, showPrices }: { customerId: number; canLog: boolean; showMoney: boolean; showPrices: boolean }) {
+  const items = await getCustomerCommunications(customerId, { showMoney, showPrices });
   return (
     <div className="grid gap-5 lg:grid-cols-3">
       {canLog && (
