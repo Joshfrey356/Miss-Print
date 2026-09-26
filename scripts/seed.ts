@@ -13,7 +13,7 @@ import { sql } from "drizzle-orm";
 import * as s from "../src/lib/db/schema";
 import type { PricingConfig } from "../src/lib/pricing/engine";
 
-const client = postgres(process.env.DATABASE_URL!, { max: 1, onnotice: () => {} });
+const client = postgres(process.env.DATABASE_URL!, { max: 1, prepare: false, onnotice: () => {} });
 const db = drizzle(client, { schema: s });
 
 // ---------- deterministic randomness ----------
