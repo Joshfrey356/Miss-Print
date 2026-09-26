@@ -77,7 +77,7 @@ Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS v4 · PostgreS
 
 ## Going live on Vercel + Supabase
 
-1. In Vercel → miss-print → Environment Variables, set `DATABASE_URL` (Supabase **Transaction pooler** URI, port 6543), `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `STORAGE_DRIVER=supabase` and `APP_URL`.
+1. In Vercel → miss-print → Environment Variables, set `DATABASE_URL` (Supabase **Transaction pooler** URI, port 6543), `SUPABASE_URL`, `SUPABASE_SECRET_KEY` (the `sb_secret_…` key), `STORAGE_DRIVER=supabase` and `APP_URL`.
 2. Redeploy. Production builds run the database migrations automatically (`scripts/migrate.ts --deploy`).
 3. Open the site. On an empty database it sends you to **/setup** to create the owner account; that also loads locations, starter pricing, vendors and materials. `/setup` closes for good once a user exists.
 
