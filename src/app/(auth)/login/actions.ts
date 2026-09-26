@@ -1,6 +1,6 @@
 "use server";
 import { redirect } from "next/navigation";
-import { signIn, signOut } from "@/lib/auth";
+import { previewSignIn, signIn, signOut } from "@/lib/auth";
 
 export async function loginAction(_prev: { error?: string } | undefined, formData: FormData) {
   const email = String(formData.get("email") ?? "");
@@ -17,4 +17,11 @@ export async function loginAction(_prev: { error?: string } | undefined, formDat
 export async function logoutAction() {
   await signOut();
   redirect("/login");
+}
+
+/** Preview mode: one-click demo sign-in (refused unless running on the built-in demo data). */
+export async function previewLoginAction(formData: FormData) {
+  const r = await previewSignIn(String(formData.get("email") ?? ""));
+  if (!r.ok) redirect("/login");
+  redirect("/dashboard");
 }

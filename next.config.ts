@@ -9,7 +9,11 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
-  serverExternalPackages: ["postgres", "bcryptjs"],
+  serverExternalPackages: ["postgres", "bcryptjs", "@electric-sql/pglite"],
+  // Preview mode (no DATABASE_URL) loads the demo data + PGlite's WASM files at runtime.
+  outputFileTracingIncludes: {
+    "/*": ["./preview/**/*", "./node_modules/@electric-sql/pglite/dist/**/*"],
+  },
   experimental: {
     serverActions: { bodySizeLimit: "50mb" },
   },

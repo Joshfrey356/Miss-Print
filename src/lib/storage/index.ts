@@ -26,7 +26,13 @@ class LocalStorage implements StorageProvider {
     await writeFile(p, data, { flag: "wx" }); // never overwrite
   }
   async get(key: string) {
-    return readFile(this.resolve(key));
+    try {
+      return await readFile(this.resolve(key));
+    } catch (e) {
+      // Preview mode: demo placeholder files ship in preview/storage.
+      if (!process.env.DATABASE_URL) return readFile(path.join(process.cwd(), "preview/storage", path.normalize(key).replace(/^(\.\.[/\\])+/, "")));
+      throw e;
+    }
   }
   async exists(key: string) {
     try {
@@ -44,7 +50,9 @@ let instance: StorageProvider | null = null;
 export function storage(): StorageProvider {
   if (instance) return instance;
   const driver = process.env.STORAGE_DRIVER ?? "local";
-  if (driver === "local") instance = new LocalStorage(path.resolve(process.env.STORAGE_LOCAL_DIR ?? "./storage"));
+  // Preview mode (no DATABASE_URL) writes to /tmp, the only writable place on serverless hosts.
+  const dir = process.env.STORAGE_LOCAL_DIR ?? (process.env.DATABASE_URL ? "./storage" : "/tmp/miss-print-storage");
+  if (driver === "local") instance = new LocalStorage(path.resolve(dir));
   else throw new Error(`Storage driver "${driver}" is not implemented yet. Use STORAGE_DRIVER=local.`);
   return instance;
 }

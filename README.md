@@ -74,3 +74,9 @@ Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS v4 · PostgreS
 - Queries are parameterized, and there is no raw HTML rendering of user content. Files are downloaded only through an authenticated route, and inline SVG is sandboxed.
 - Business records are archived, not deleted. Invoices and payments are voided with a reason. Every important change is written to the activity log with before/after values.
 - Secrets live only in environment variables (`.env.local` is git-ignored).
+
+## Preview mode (no setup)
+
+If **no `DATABASE_URL` is set** (e.g. a fresh Vercel deploy), the app runs in **preview mode**: an in-memory Postgres (PGlite) loaded with the made-up demo data from `preview/demo.sql.gz`, with all dates shifted to look current. The sign-in page shows one-click "Enter as Owner / Production / …" buttons, no password needed. Changes are not permanent.
+
+Preview mode can never touch real data: the password-free sign-in is refused as soon as `DATABASE_URL` is set, and the app then uses the real database. Regenerate the demo data after changing the seed with `./scripts/build-preview-data.sh`.

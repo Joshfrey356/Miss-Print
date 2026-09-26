@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { createHash, randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { and, eq, gt, sql } from "drizzle-orm";
-import { db } from "@/lib/db";
+import { db, isPreviewMode } from "@/lib/db";
 import { loginAttempts, sessions, users, type User } from "@/lib/db/schema";
 import { can, type Permission } from "@/lib/permissions";
 
@@ -70,16 +70,21 @@ export async function signIn(
   ]);
   if (!user || !success) return { ok: false, error: "That email and password don't match." };
 
+  await startSession(user.id, ip);
+  return { ok: true };
+}
+
+async function startSession(userId: number, ip: string) {
   const token = randomBytes(32).toString("base64url");
   const h = await headers();
   await db.insert(sessions).values({
     id: hashToken(token),
-    userId: user.id,
+    userId,
     expiresAt: new Date(Date.now() + SESSION_DAYS * DAY),
     ip,
     userAgent: h.get("user-agent")?.slice(0, 300) ?? null,
   });
-  await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id));
+  await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, userId));
   (await cookies()).set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
@@ -87,6 +92,18 @@ export async function signIn(
     path: "/",
     maxAge: SESSION_DAYS * 24 * 60 * 60,
   });
+}
+
+/**
+ * PREVIEW MODE ONLY: sign in as a demo user without a password.
+ * Refuses unless the app is running on the built-in demo database (no DATABASE_URL),
+ * so it can never be used against real data.
+ */
+export async function previewSignIn(email: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!isPreviewMode()) return { ok: false, error: "Preview sign-in is only available in preview mode." };
+  const [user] = await db.select().from(users).where(sql`lower(${users.email}) = ${email.toLowerCase()}`).limit(1);
+  if (!user || !user.active) return { ok: false, error: "Demo user not found." };
+  await startSession(user.id, await clientIp());
   return { ok: true };
 }
 
