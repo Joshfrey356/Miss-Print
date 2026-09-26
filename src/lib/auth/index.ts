@@ -17,6 +17,8 @@ export type SessionUser = Pick<User, "id" | "name" | "handle" | "email" | "role"
 
 export const hashPassword = (password: string) => bcrypt.hash(password, 12);
 export const verifyPassword = (password: string, hash: string) => bcrypt.compare(password, hash);
+// Valid cost-12 bcrypt hash of a random throwaway string (never matches a real password).
+const DUMMY_HASH = "$2b$12$tzWQrcbWfkT7HymssBcn0u5iyXa.fhLGaXBAlGaEazo3yTCt.7c9C";
 const hashToken = (token: string) => createHash("sha256").update(token).digest("hex");
 
 async function clientIp() {
@@ -59,7 +61,8 @@ export async function signIn(
     .where(sql`lower(${users.email}) = ${email}`)
     .limit(1);
   // Always run bcrypt so response time doesn't reveal whether the email exists.
-  const valid = await verifyPassword(password, user?.passwordHash ?? "$2a$12$invalidinvalidinvalidinvalidinvalidinvalidinvalidinv");
+  // DUMMY_HASH must be a well-formed 60-char bcrypt hash, or bcrypt returns instantly.
+  const valid = await verifyPassword(password, user?.passwordHash ?? DUMMY_HASH);
   const success = Boolean(user && user.active && valid);
   await db.insert(loginAttempts).values([
     { key: "email:" + email, success },

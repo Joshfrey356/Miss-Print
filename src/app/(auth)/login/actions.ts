@@ -10,7 +10,8 @@ export async function loginAction(_prev: { error?: string } | undefined, formDat
   if (!result.ok) return { error: result.error };
   const next = String(formData.get("next") ?? "");
   // Only allow internal redirects.
-  redirect(next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard");
+  // Reject "//host" and "/\host" (browsers treat a backslash like a slash).
+  redirect(next.startsWith("/") && !next.startsWith("//") && !next.includes("\\") ? next : "/dashboard");
 }
 
 export async function logoutAction() {

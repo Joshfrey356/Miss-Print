@@ -17,7 +17,7 @@ export function toCsv(t: ReportTable): string {
           return String(v);
         }
         // Stop spreadsheet formula injection from customer-entered text.
-        return esc(/^[=+\-@]/.test(v) ? `'${v}` : v);
+        return esc(/^[=+\-@\t\r]/.test(v) ? `'${v}` : v);
       })
       .join(","),
   );
