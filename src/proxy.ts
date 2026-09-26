@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/login", "/proof/", "/api/proof/", "/_next", "/favicon", "/logo", "/icon"];
+const PUBLIC_PATHS = ["/login", "/setup", "/proof/", "/api/proof/", "/_next", "/favicon", "/logo", "/icon"];
 
 /**
  * Optimistic auth check only (is there a session cookie?).
