@@ -15,6 +15,13 @@
       "when": 1790380669322,
       "tag": "0001_discount_precision",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790390515418,
+      "tag": "0002_enable_rls",
+      "breakpoints": true
     }
   ]
 }
