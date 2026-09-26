@@ -301,6 +301,8 @@ export async function sendQuote(id: number, opts: { email: string | null; messag
 export async function setQuoteOutcome(id: number, outcome: "accepted" | "declined" | "expired" | "draft", reason?: string) {
   return runAction(async () => {
     const user = await requirePermission("quotes.edit");
+    // Server Actions can be called with any value: never let a client set e.g. "converted".
+    outcome = z.enum(["accepted", "declined", "expired", "draft"]).parse(outcome);
     const q = await loadQuote(id);
     if (q.status === "converted") throw new UserError("This quote is already a job.");
     await db

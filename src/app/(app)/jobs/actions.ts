@@ -20,10 +20,21 @@ import { getSettings } from "@/lib/settings";
 
 const actor = (u: SessionUser) => ({ id: u.id, name: u.name });
 
+/** Money / quantity inputs from the client: whole, non-negative, and within the DB's integer range. */
+const centsIn = (v: number | null, label: string) => z.number().int().min(0, `${label} can't be negative.`).max(100_000_000, `${label} looks too large.`).parse(v ?? 0);
+const qtyIn = (v: number | null) => z.number().int().min(1, "Quantity must be at least 1.").max(10_000_000, "That quantity looks too large.").parse(v ?? 1);
+
 async function loadJob(jobId: number) {
   const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));
   if (!job) throw new UserError("Job not found.");
   return job;
+}
+
+/** A contact must belong to the job's customer; otherwise it is dropped. */
+async function contactFor(customerId: number, contactId: number | null) {
+  if (!contactId) return null;
+  const [c] = await db.select({ id: customerContacts.id }).from(customerContacts).where(and(eq(customerContacts.id, contactId), eq(customerContacts.customerId, customerId)));
+  return c ? c.id : null;
 }
 
 function revalidateJob(number: number) {
@@ -107,8 +118,8 @@ export async function createJob(_prev: unknown, fd: FormData) {
     const needsProof = bool(fd, "needsProof");
     const needsInstall = bool(fd, "needsInstall");
     const hasArtwork = bool(fd, "hasArtwork");
-    const priceCents = can(user.role, "financials.view") ? (parseMoney(fd.get("price")) ?? 0) : 0;
-    const quantity = int(fd, "quantity") ?? 1;
+    const priceCents = can(user.role, "financials.view") ? centsIn(parseMoney(fd.get("price")), "Price") : 0;
+    const quantity = qtyIn(int(fd, "quantity"));
     const status: JobStatus = !hasArtwork && !needsDesign ? "waiting_artwork" : needsDesign || needsProof ? "design" : "approved_for_production";
     const fulfillment = z.enum(FULFILLMENTS).catch(needsInstall ? "install" : "pickup").parse(str(fd, "fulfillment") ?? undefined);
 
@@ -117,7 +128,7 @@ export async function createJob(_prev: unknown, fd: FormData) {
         .insert(jobs)
         .values({
           customerId,
-          contactId: int(fd, "contactId"),
+          contactId: await contactFor(customerId, int(fd, "contactId")),
           title,
           categoryId: categoryId ?? null,
           description: str(fd, "description"),
@@ -204,7 +215,7 @@ export async function updateJob(jobId: number, fd: FormData) {
       priority: str(fd, "priority") ?? "normal",
       fulfillment: str(fd, "fulfillment") ?? "pickup",
       locationId: int(fd, "locationId"),
-      contactId: int(fd, "contactId"),
+      contactId: await contactFor(job.customerId, int(fd, "contactId")),
       dueDate: str(fd, "dueDate"),
       productionDueDate: str(fd, "productionDueDate"),
       // datetime-local is shop time (Central). Convert with the current offset.
@@ -283,7 +294,7 @@ const ASSIGN_FIELDS = { designerId: "Designer", productionId: "Production", inst
 export async function assignJob(jobId: number, field: keyof typeof ASSIGN_FIELDS, userId: number | null) {
   return runAction(async () => {
     const user = await requirePermission("jobs.status");
-    if (!(field in ASSIGN_FIELDS)) throw new UserError("Unknown role.");
+    if (!Object.hasOwn(ASSIGN_FIELDS, field)) throw new UserError("Unknown role.");
     const job = await loadJob(jobId);
     const [person] = userId ? await db.select({ name: users.name }).from(users).where(eq(users.id, userId)) : [];
     await db.transaction(async (tx) => {
@@ -320,7 +331,7 @@ export async function saveJobItem(jobId: number, itemId: number | null, fd: Form
     const values = {
       description,
       categoryId: int(fd, "categoryId"),
-      quantity: int(fd, "quantity") ?? 1,
+      quantity: qtyIn(int(fd, "quantity")),
       widthIn: num(fd, "widthIn"),
       heightIn: num(fd, "heightIn"),
       material: str(fd, "material"),
@@ -328,8 +339,8 @@ export async function saveJobItem(jobId: number, itemId: number | null, fd: Form
       colors: str(fd, "colors"),
       specs: str(fd, "specs"),
       taxable: fd.has("taxableField") ? bool(fd, "taxable") : true,
-      ...(seeMoney ? { priceCents: parseMoney(fd.get("price")) ?? 0 } : {}),
-      ...(seeCost ? { estimatedCostCents: parseMoney(fd.get("cost")) ?? 0 } : {}),
+      ...(seeMoney ? { priceCents: centsIn(parseMoney(fd.get("price")), "Price") } : {}),
+      ...(seeCost ? { estimatedCostCents: centsIn(parseMoney(fd.get("cost")), "Cost") } : {}),
     };
     await db.transaction(async (tx) => {
       if (itemId) {
@@ -389,7 +400,7 @@ export async function reorderJobAction(jobId: number, opts: ReorderOptions) {
       sameArtwork: !!opts.sameArtwork,
       sameSpecs: !!opts.sameSpecs,
       dueDate: opts.dueDate || null,
-      priceCents: can(user.role, "financials.view") ? (opts.priceCents ?? null) : null,
+      priceCents: can(user.role, "financials.view") && opts.priceCents != null ? centsIn(opts.priceCents, "Price") : null,
       notes: opts.notes?.slice(0, 2000) ?? null,
     };
     return reorderJob(jobId, clean, actor(user));
@@ -435,6 +446,7 @@ export async function sendProof(proofId: number, to: string, message: string | n
     const [proof] = await db.select().from(proofs).where(eq(proofs.id, proofId));
     if (!proof) throw new UserError("Proof not found.");
     if (proof.status === "approved") throw new UserError("This proof is already approved.");
+    if (proof.status === "superseded") throw new UserError("A newer proof version exists. Send that one instead.");
     const job = await loadJob(proof.jobId);
     const [cust] = await db.select({ name: customers.name }).from(customers).where(eq(customers.id, job.customerId));
     const token = randomBytes(32).toString("base64url");
@@ -479,6 +491,8 @@ export async function recordProofApproval(proofId: number, approverName: string)
     if (!name) throw new UserError("Who approved it?");
     const [proof] = await db.select().from(proofs).where(eq(proofs.id, proofId));
     if (!proof) throw new UserError("Proof not found.");
+    if (proof.status === "approved") throw new UserError("This proof is already approved.");
+    if (proof.status === "superseded") throw new UserError("A newer proof version exists. Approve that one instead.");
     const job = await loadJob(proof.jobId);
     await db.transaction(async (tx) => {
       await tx

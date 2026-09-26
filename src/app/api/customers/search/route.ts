@@ -40,5 +40,7 @@ export async function GET(req: Request) {
         .from(customerContacts)
         .where(and(inArray(customerContacts.customerId, rows.map((r) => r.id)), isNull(customerContacts.archivedAt)))
     : [];
-  return NextResponse.json({ customers: rows.map((r) => ({ ...r, contacts: contacts.filter((c) => c.customerId === r.id) })) });
+  // The customer discount is pricing data: only for roles that can see prices.
+  const showMoney = can(user.role, "financials.view");
+  return NextResponse.json({ customers: rows.map((r) => ({ ...r, discountPct: showMoney ? r.discountPct : 0, contacts: contacts.filter((c) => c.customerId === r.id) })) });
 }

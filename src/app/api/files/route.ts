@@ -23,7 +23,10 @@ export async function POST(req: Request) {
     for (const f of list)
       saved.push(await saveUpload(f, { folder, jobId: id("jobId"), customerId: id("customerId"), quoteId: id("quoteId"), note: (fd.get("note") as string) || null }, user));
   } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : "Upload failed" }, { status: 400 });
+    // Our own validation messages are safe to show; anything else (e.g. a database error) is not.
+    const msg = e instanceof Error && /larger than|isn't allowed/.test(e.message) ? e.message : "Upload failed. Please try again.";
+    if (msg.startsWith("Upload failed")) console.error("[upload error]", e);
+    return NextResponse.json({ error: msg }, { status: 400 });
   }
   return NextResponse.json({ files: saved.map((f) => ({ id: f.id, filename: f.filename })) });
 }

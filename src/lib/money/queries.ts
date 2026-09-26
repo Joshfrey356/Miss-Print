@@ -214,7 +214,7 @@ const INVOICE_SORTS = {
 
 export async function listInvoices(p: InvoiceListParams, opts: { all?: boolean } = {}) {
   const { where, status } = invoiceWhere(p);
-  const sortKey = (p.sort && p.sort in INVOICE_SORTS ? p.sort : "number") as keyof typeof INVOICE_SORTS;
+  const sortKey = (p.sort && Object.hasOwn(INVOICE_SORTS, p.sort) ? p.sort : "number") as keyof typeof INVOICE_SORTS;
   const dir = p.dir === "asc" ? asc : desc;
   const page = pageOf(p.page);
   const base = db

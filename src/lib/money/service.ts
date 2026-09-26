@@ -129,6 +129,7 @@ export async function voidInvoice(invoiceId: number, reason: string, actor: Acto
   await db.transaction(async (tx) => {
     const [inv] = await tx.select().from(invoices).where(eq(invoices.id, invoiceId)).for("update");
     if (!inv) throw new UserError("Invoice not found.");
+    if (inv.status === "void") throw new UserError("This invoice is already void.");
     if (inv.paidCents > 0) throw new UserError("This invoice has payments. Void the payments first.");
     await tx.update(invoices).set({ status: "void", voidedAt: new Date(), voidReason: reason.trim() }).where(eq(invoices.id, invoiceId));
     await logActivity(
