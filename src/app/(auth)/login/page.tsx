@@ -4,6 +4,7 @@ import { Logo } from "@/components/logo";
 import { LoginForm } from "./login-form";
 import { isPreviewMode } from "@/lib/db";
 import { previewLoginAction } from "./actions";
+import { getSetupState } from "@/lib/setup";
 
 const PREVIEW_USERS = [
   { email: "owner@missprintusa.com", label: "Owner / Admin", who: "Rick — everything, incl. money & settings" },
@@ -20,6 +21,7 @@ export const metadata = { title: "Sign in" };
 export const dynamic = "force-dynamic";
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string; error?: string }> }) {
+  if (!isPreviewMode() && (await getSetupState()).state === "needs_setup") redirect("/setup");
   if (await getCurrentUser()) redirect("/dashboard");
   const { next, error } = await searchParams;
   return (
