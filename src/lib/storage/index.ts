@@ -94,12 +94,15 @@ class SupabaseStorage implements StorageProvider {
   }
 }
 
+/** Server-only Supabase key: the new secret key (sb_secret_…), or the legacy service_role key. */
+const supabaseSecretKey = () => (process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY)?.trim();
+
 /** Which storage driver is active: explicit STORAGE_DRIVER, else Supabase when its keys are set, else local disk. */
 export function storageDriverName(): "local" | "supabase" {
   const explicit = process.env.STORAGE_DRIVER?.trim().toLowerCase();
   if (explicit === "supabase" || explicit === "local") return explicit;
   if (explicit) throw new Error(`Storage driver "${explicit}" is not supported. Use STORAGE_DRIVER=supabase or local.`);
-  return process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY ? "supabase" : "local";
+  return process.env.SUPABASE_URL && supabaseSecretKey() ? "supabase" : "local";
 }
 
 let instance: StorageProvider | null = null;
@@ -108,8 +111,8 @@ export function storage(): StorageProvider {
   const driver = storageDriverName();
   if (driver === "supabase") {
     const url = process.env.SUPABASE_URL?.trim();
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
-    if (!url || !key) throw new Error("STORAGE_DRIVER=supabase needs SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.");
+    const key = supabaseSecretKey();
+    if (!url || !key) throw new Error("STORAGE_DRIVER=supabase needs SUPABASE_URL and SUPABASE_SECRET_KEY.");
     instance = new SupabaseStorage(url, key, process.env.STORAGE_BUCKET?.trim() || "miss-print-files");
     return instance;
   }
