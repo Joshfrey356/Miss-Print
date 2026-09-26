@@ -53,7 +53,7 @@ Demo sign-ins (password `missprint2026`):
 | tony@missprintusa.com | Installer |
 | dana@missprintusa.com | Accounting |
 
-Useful scripts: `npm run db:reset` (dev only: drop, migrate, seed), `npm run typecheck`, `npm test`, `npm run build`.
+Useful scripts: `npm run db:setup` (go-live: migrate + starter categories/pricing + owner account from `OWNER_EMAIL`/`OWNER_PASSWORD`, no demo data), `npm run db:reset` (dev only: drop, migrate, seed), `npm run typecheck`, `npm test`, `npm run build`.
 
 ## Stack
 

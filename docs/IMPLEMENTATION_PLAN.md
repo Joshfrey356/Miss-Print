@@ -49,7 +49,7 @@ Legend: ✅ done · 🔜 next · ⏳ later
 8. **HTTPS only** (the host provides it). Cookies become `Secure` automatically in production.
 9. Import existing customers (Phase 2 import wizard, or a one-time script).
 
-To start empty in production, run `npm run db:migrate`, then create the owner account with a one-off script. A seed-less `scripts/create-owner.ts` is a small follow-up task.
+To start clean in production: `OWNER_EMAIL=… OWNER_PASSWORD=… OWNER_NAME="…" npm run db:setup`. This migrates the database and creates the locations, product categories with starter pricing rules, vendors, materials and one owner account, with no demo customers or jobs.
 
 ---
 

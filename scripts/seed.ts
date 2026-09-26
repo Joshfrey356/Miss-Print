@@ -70,8 +70,18 @@ async function main() {
     { name: "Tony Russo", handle: "tony", email: "tony@missprintusa.com", role: "installer" as const, title: "Installer", color: "#0891b2", locationId: hammond!.id },
     { name: "Dana Whitfield", handle: "dana", email: "dana@missprintusa.com", role: "accounting" as const, title: "Bookkeeper", color: "#4b5563", locationId: munster!.id },
   ];
-  const us = await db.insert(s.users).values(people.map((p) => ({ ...p, passwordHash: pw }))).returning();
+  // BASE mode (go-live): only the owner account + reference data, no demo customers/jobs.
+  const BASE = process.env.SEED_MODE === "base";
+  if (BASE) {
+    const email = process.env.OWNER_EMAIL;
+    const password = process.env.OWNER_PASSWORD;
+    if (!email || !password || password.length < 10) throw new Error("SEED_MODE=base needs OWNER_EMAIL and OWNER_PASSWORD (10+ characters), optionally OWNER_NAME.");
+    people.splice(0, people.length, { ...people[0]!, name: process.env.OWNER_NAME ?? "Owner", email, handle: (process.env.OWNER_NAME ?? "owner").split(" ")[0]!.toLowerCase() });
+  }
+  const ownerPw = BASE ? await bcrypt.hash(process.env.OWNER_PASSWORD!, 12) : pw;
+  const us = await db.insert(s.users).values(people.map((p) => ({ ...p, passwordHash: ownerPw }))).returning();
   const U = Object.fromEntries(us.map((u) => [u.handle, u])) as Record<string, s.User>;
+  if (BASE) U.rick = us[0]!;
 
   // ---------- settings / business rules ----------
   await db.insert(s.companySettings).values([
@@ -158,6 +168,12 @@ async function main() {
     .returning();
   const C = Object.fromEntries(catRows.map((c) => [c.slug, c]));
   await db.insert(s.pricingRules).values(cats.map((c) => ({ categoryId: C[c.slug]!.id, config: c.config, notes: c.notes ?? null, updatedBy: U.rick!.id })));
+  if (BASE) {
+    console.log(`✓ Base setup done: locations, ${cats.length} categories with starter pricing, vendors, materials and owner ${us[0]!.email}.`);
+    console.log("  Review Settings → Business Rules and Pricing before quoting.");
+    await client.end();
+    return;
+  }
 
   // ---------- customers ----------
   type Cu = { name: string; phone: string; email: string; address: string; city: string; zip: string; contacts: [string, string?, string?][]; sales?: string; terms?: s.Customer["paymentTerms"]; exempt?: boolean; po?: boolean; discount?: number; notes?: string; since: string; company?: boolean };
