@@ -1,4 +1,5 @@
 import "server-only";
+import { storageDriverName } from "@/lib/storage";
 
 export type IntegrationStatus = {
   key: string;
@@ -14,7 +15,12 @@ const set = (name: string) => Boolean(process.env[name] && process.env[name]!.tr
 /** Integration status from environment variables. Never returns secret values, only whether they are set. */
 export function getIntegrationStatuses(): IntegrationStatus[] {
   const email = (process.env.EMAIL_PROVIDER ?? "console").toLowerCase();
-  const storage = (process.env.STORAGE_DRIVER ?? "local").toLowerCase();
+  let storage: string;
+  try {
+    storage = storageDriverName();
+  } catch {
+    storage = (process.env.STORAGE_DRIVER ?? "local").toLowerCase();
+  }
   const accounting = (process.env.ACCOUNTING_PROVIDER ?? "none").toLowerCase();
   const ai = (process.env.AI_PROVIDER ?? "none").toLowerCase();
 
@@ -38,7 +44,7 @@ export function getIntegrationStatuses(): IntegrationStatus[] {
       name: "File storage",
       what: "Where artwork, proofs, photos and receipts are kept.",
       state: storage === "local" ? "dev" : "connected",
-      stateLabel: storage === "local" ? "Stored on this server's disk" : `Cloud storage (${storage})`,
+      stateLabel: storage === "local" ? "Stored on this server's disk" : storage === "supabase" ? `Supabase Storage (bucket: ${process.env.STORAGE_BUCKET?.trim() || "miss-print-files"})` : `Cloud storage (${storage})`,
       details: [
         storage === "local"
           ? "Fine for one server. Before going live, switch to cloud storage (Supabase or S3) with versioning and backups."
