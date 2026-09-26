@@ -17,7 +17,7 @@ import {
 import { logActivity } from "@/lib/activity";
 import { notify } from "@/lib/notifications";
 import { jobNo, today } from "@/lib/format";
-import { STATUS_LABELS, afterApproval } from "@/lib/jobs/workflow";
+import { STATUS_LABELS, WORK_STATUSES, afterApproval } from "@/lib/jobs/workflow";
 import { taxFor } from "@/lib/pricing/engine";
 
 type Actor = { id: number; name: string };
@@ -298,4 +298,4 @@ export async function reorderJob(sourceJobId: number, opts: ReorderOptions, acto
 }
 
 export const isOverdue = (j: { dueDate: string | null; status: JobStatus }) =>
-  !!j.dueDate && j.dueDate < today() && !["completed", "cancelled", "on_hold"].includes(j.status);
+  !!j.dueDate && j.dueDate < today() && WORK_STATUSES.includes(j.status);

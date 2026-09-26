@@ -6,12 +6,14 @@ import { logActivity } from "@/lib/activity";
 import { addDays, invoiceNo, jobNo, money, today } from "@/lib/format";
 import { taxFor } from "@/lib/pricing/engine";
 import { UserError } from "@/lib/actions";
+import { PAYMENT_METHOD_LABELS } from "./labels";
 
 type Actor = { id: number; name: string };
 
 export const TERMS_DAYS = { due_on_receipt: 0, net_15: 15, net_30: 30, net_45: 45, net_60: 60 } as const;
 export const TERMS_LABELS = { due_on_receipt: "Due on receipt", net_15: "Net 15", net_30: "Net 30", net_45: "Net 45", net_60: "Net 60" } as const;
-export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = { cash: "Cash", check: "Check", card: "Card", ach: "ACH / Bank transfer", other: "Other" };
+// Labels live in ./labels (client-safe); re-exported here so existing imports keep working.
+export { PAYMENT_METHOD_LABELS };
 
 export const balanceOf = (inv: { totalCents: number; paidCents: number; status: string }) =>
   inv.status === "void" ? 0 : Math.max(0, inv.totalCents - inv.paidCents);
@@ -143,6 +145,19 @@ export async function voidPayment(paymentId: number, reason: string, actor: Acto
     if (!p || p.voidedAt) throw new UserError("Payment not found.");
     await tx.update(payments).set({ voidedAt: new Date(), notes: [p.notes, `VOID: ${reason.trim()}`].filter(Boolean).join("\n") }).where(eq(payments.id, paymentId));
     await recalcInvoicePaid(tx, p.invoiceId);
-    await logActivity({ action: "payment.voided", entityType: "payment", entityId: p.id, customerId: p.customerId, actorId: actor.id, summary: `Voided payment of ${money(p.amountCents)}: ${reason.trim()}` }, tx);
+    const [inv] = await tx.select({ number: invoices.number, jobId: invoices.jobId }).from(invoices).where(eq(invoices.id, p.invoiceId));
+    await logActivity(
+      {
+        action: "payment.voided",
+        entityType: "payment",
+        entityId: p.id,
+        jobId: inv?.jobId ?? null,
+        customerId: p.customerId,
+        actorId: actor.id,
+        summary: `Voided payment of ${money(p.amountCents)}${inv ? ` on ${invoiceNo(inv.number)}` : ""}: ${reason.trim()}`,
+        data: { invoiceId: p.invoiceId },
+      },
+      tx,
+    );
   });
 }

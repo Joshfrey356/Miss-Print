@@ -59,3 +59,50 @@ export function Confirm({
     </>
   );
 }
+
+/** Controlled confirmation dialog — use when the trigger lives inside a dropdown menu. */
+export function ConfirmDialog({
+  open,
+  onOpenChange,
+  title,
+  description,
+  confirmLabel = "Yes, continue",
+  danger = true,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  title: string;
+  description?: React.ReactNode;
+  confirmLabel?: string;
+  danger?: boolean;
+  onConfirm: () => void | Promise<void>;
+}) {
+  const [busy, setBusy] = React.useState(false);
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent title={title} description={description}>
+        <div className="flex justify-end gap-2">
+          <DialogClose asChild>
+            <Button>Cancel</Button>
+          </DialogClose>
+          <Button
+            variant={danger ? "danger" : "primary"}
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await onConfirm();
+                onOpenChange(false);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {confirmLabel}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}

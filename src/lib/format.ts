@@ -151,3 +151,11 @@ export function initials(name: string) {
 }
 
 export const plural = (n: number, one: string, many = one + "s") => `${n} ${n === 1 ? one : many}`;
+
+/** The instant a shop-local day starts (handles CST/CDT). */
+export function shopMidnight(ymd: string): Date {
+  const noon = new Date(`${ymd}T12:00:00Z`);
+  const local = new Date(noon.toLocaleString("en-US", { timeZone: SHOP_TZ }));
+  const utc = new Date(noon.toLocaleString("en-US", { timeZone: "UTC" }));
+  return new Date(Date.parse(`${ymd}T00:00:00Z`) + (utc.getTime() - local.getTime()));
+}

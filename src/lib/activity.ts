@@ -4,7 +4,7 @@ import { activityLogs } from "@/lib/db/schema";
 
 export type ActivityInput = {
   action: string; // "job.status_changed"
-  entityType: "job" | "quote" | "customer" | "invoice" | "payment" | "expense" | "user" | "setting" | "file" | "proof" | "task";
+  entityType: "job" | "quote" | "customer" | "invoice" | "payment" | "expense" | "user" | "setting" | "file" | "proof" | "task" | "message" | "event" | "knowledge";
   entityId?: number | null;
   jobId?: number | null;
   customerId?: number | null;

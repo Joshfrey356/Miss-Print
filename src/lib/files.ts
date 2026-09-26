@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, isNull, max } from "drizzle-orm";
+import { and, eq, inArray, isNull, max } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { files, jobs, proofs, type FileFolder } from "@/lib/db/schema";
 import { basicPreflight, MAX_UPLOAD_BYTES, newStorageKey, storage } from "@/lib/storage";
@@ -10,17 +10,8 @@ import { nextStatus } from "@/lib/jobs/workflow";
 import { jobNo } from "@/lib/format";
 import type { SessionUser } from "@/lib/auth";
 
-export const FOLDER_LABELS: Record<FileFolder, string> = {
-  customer: "Customer Files",
-  original_artwork: "Original Artwork",
-  working: "Working Files",
-  proof: "Proofs",
-  production: "Production Files",
-  install_photos: "Installation Photos",
-  completed_photos: "Completed Photos",
-  receipt: "Receipts",
-  other: "Other",
-};
+export { FOLDER_LABELS } from "@/lib/files-shared";
+import { FOLDER_LABELS } from "@/lib/files-shared";
 export const JOB_FOLDERS: FileFolder[] = ["original_artwork", "customer", "working", "proof", "production", "install_photos", "completed_photos"];
 
 const BLOCKED_EXT = /\.(exe|bat|cmd|com|msi|sh|ps1|js|mjs|jar|app|dll|scr|vbs|html?)$/i;
@@ -66,7 +57,8 @@ export async function saveUpload(
         // Never overwrite proofs: each upload is a new version.
         const [{ v }] = await tx.select({ v: max(proofs.version) }).from(proofs).where(eq(proofs.jobId, job.id));
         const version = (v ?? 0) + 1;
-        await tx.update(proofs).set({ status: "superseded" }).where(and(eq(proofs.jobId, job.id), eq(proofs.status, "draft")));
+        // Older unapproved versions are replaced (their links show "a newer proof is available").
+        await tx.update(proofs).set({ status: "superseded" }).where(and(eq(proofs.jobId, job.id), inArray(proofs.status, ["draft", "sent", "changes_requested"])));
         await tx.insert(proofs).values({ jobId: job.id, version, fileId: row!.id, status: "draft", note: opts.note ?? null, createdBy: user.id });
         await tx.update(files).set({ filename: `Proof V${version} — ${filename}` }).where(eq(files.id, row!.id));
         await logActivity({ action: "proof.uploaded", entityType: "proof", jobId: job.id, customerId: job.customerId, actorId: user.id, summary: `Uploaded Proof V${version}` }, tx);

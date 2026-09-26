@@ -1,0 +1,1 @@
+ALTER TABLE "customers" ALTER COLUMN "discount_pct" SET DATA TYPE numeric(5, 4);

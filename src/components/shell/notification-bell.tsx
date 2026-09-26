@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Bell, CheckCheck } from "lucide-react";
 import { Dropdown, DropdownContent, DropdownTrigger } from "@/components/ui/dropdown";
 import { timeAgo } from "@/lib/format";
@@ -21,6 +21,15 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
     setUnread(json.unread);
     setItems(json.items);
   }, []);
+
+  // Refresh the count when navigating (e.g. after reading notifications) and when the server count changes.
+  const pathname = usePathname();
+  useEffect(() => {
+    setUnread(initialUnread);
+  }, [initialUnread]);
+  useEffect(() => {
+    load();
+  }, [pathname, load]);
 
   // Light polling — once a minute, only while the tab is visible.
   useEffect(() => {

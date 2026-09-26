@@ -56,12 +56,14 @@ export const STATUS_TONE: Record<JobStatus, StatusTone> = {
   cancelled: "red",
 };
 
-export const OPEN_STATUSES = (Object.keys(STATUS_LABELS) as JobStatus[]).filter(
+export const OPEN_STATUSES: JobStatus[] = (Object.keys(STATUS_LABELS) as JobStatus[]).filter(
   (s) => s !== "completed" && s !== "cancelled",
 );
 /** Statuses that count as "work still to do" for due-date / overdue purposes. */
-export const ACTIVE_STATUSES = OPEN_STATUSES.filter((s) => s !== "on_hold");
+export const ACTIVE_STATUSES: JobStatus[] = OPEN_STATUSES.filter((s) => s !== "on_hold");
 export const READY_STATUSES: JobStatus[] = ["ready_pickup", "scheduled_delivery", "scheduled_install"];
+/** Jobs whose work isn't finished yet — these can be "overdue". (Ready-for-pickup jobs are done on our side.) */
+export const WORK_STATUSES: JobStatus[] = ACTIVE_STATUSES.filter((s) => !["ready_pickup", "scheduled_delivery"].includes(s));
 
 export const PRIORITY_LABELS: Record<Priority, string> = { normal: "Normal", rush: "Rush", critical: "Critical" };
 export const FULFILLMENT_LABELS: Record<Fulfillment, string> = {

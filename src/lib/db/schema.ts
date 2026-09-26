@@ -212,7 +212,7 @@ export const customers = pgTable(
     paymentTerms: paymentTermsEnum("payment_terms").notNull().default("due_on_receipt"),
     poRequired: boolean("po_required").notNull().default(false),
     /** Simple customer pricing: percent off recommended prices. */
-    discountPct: numeric("discount_pct", { precision: 5, scale: 2, mode: "number" }).notNull().default(0),
+    discountPct: numeric("discount_pct", { precision: 5, scale: 4, mode: "number" }).notNull().default(0),
     salespersonId: integer("salesperson_id").references(() => users.id),
     notes: text("notes"),
     customerSince: date("customer_since"),
@@ -810,6 +810,7 @@ export type PaymentMethod = (typeof paymentMethodEnum.enumValues)[number];
 export type EventType = (typeof eventTypeEnum.enumValues)[number];
 export type User = typeof users.$inferSelect;
 export type Customer = typeof customers.$inferSelect;
+export type CustomerContact = typeof customerContacts.$inferSelect;
 export type Job = typeof jobs.$inferSelect;
 export type JobItem = typeof jobItems.$inferSelect;
 export type Quote = typeof quotes.$inferSelect;

@@ -516,7 +516,7 @@ async function main() {
       const spec = historyTemplates[pick(bag)]!(d);
       const doneDay = Math.min(-1, (spec.dueDay ?? d + 5) + Math.round(between(-2, 2)));
       const payLag = Math.floor(between(0, 25));
-      await makeJob({ ...spec, completedDay: doneDay, paidDay: Math.min(-1, doneDay + payLag), sales: pick(["alex", "alex", "rick"]), invoice: doneDay > -45 && rand() > 0.8 ? "unpaid" : "paid" });
+      await makeJob({ ...spec, completedDay: doneDay, paidDay: Math.min(-1, doneDay + payLag), sales: pick(["alex", "alex", "rick"]), invoice: doneDay > -40 && rand() > 0.93 ? "unpaid" : "paid" });
       histCount++;
     }
   }
@@ -555,6 +555,16 @@ async function main() {
     { customer: "Region Roofing & Siding", title: "Ford F-150 Tailgate Graphics", cat: "vehicle-graphics", status: "completed", createdDay: -100, dueDay: -93, completedDay: -93, needsInstall: true, fulfillment: "install", items: [{ cat: "vehicle-graphics", desc: "Tailgate + door logos", qty: 1, price: 68000, cost: 21000 }], invoice: "overdue" },
   ];
   for (const j of cur) await makeJob(j);
+
+  // Artwork on file for current jobs that are past the artwork stage (placeholder files).
+  const artKeys: string[] = [];
+  for (const j of cur) {
+    if (["new", "waiting_artwork", "approved", "completed"].includes(j.status)) continue;
+    const { id, number } = jobIds[j.title]!;
+    const key = `seed/artwork-${number}.svg`;
+    artKeys.push(key);
+    await db.insert(s.files).values({ jobId: id, customerId: CU[j.customer]!.id, folder: ["production", "finishing", "quality_check", "approved_for_production"].includes(j.status) ? "production" : "original_artwork", filename: `${j.customer.split(" ")[0]} artwork — MP-${number}.svg`, storageKey: key, mimeType: "image/svg+xml", sizeBytes: 1800, preflightStatus: "looks_good", preflight: { notes: ["Print-ready format."] }, uploadedBy: U.alex!.id, createdAt: at(j.createdDay, 12) });
+  }
 
   // Job number lookups for messages/tasks
   const J = (title: string) => jobIds[title]!;
@@ -606,10 +616,10 @@ async function main() {
   await mkQuote({ customer: "St. John Family Chiropractic", title: "Monument Sign", status: "declined", createdDay: -40, sentDay: -39, needsInstall: true, lostReason: "Went with a cheaper out-of-town shop", items: [{ cat: "signs", desc: "Double-sided monument sign panels", qty: 1, price: 420000, cost: 190000 }] });
   await mkQuote({ customer: "Ridge Road Realty Group", title: "Agent Riders (x20)", status: "accepted", createdDay: -30, sentDay: -30, items: [{ cat: "yard-signs", desc: "20 name riders 6×24", qty: 20, w: 24, h: 6, price: 30000, cost: 5500 }] });
   // Older quotes for win-rate history
-  for (let d = -330; d < -30; d += 9) {
-    const won = rand() > 0.38;
+  for (let d = -330; d < -12; d += 4) {
+    const won = rand() > 0.55;
     const tpl = historyTemplates[pick(bag)]!(d);
-    await mkQuote({ customer: tpl.customer, title: tpl.title, status: won ? "accepted" : pick(["declined", "expired"] as const), createdDay: d, sentDay: d, items: tpl.items, lostReason: won ? undefined : pick(["Price", "Timing — didn't need it after all", "Went with online printer", undefined]) });
+    await mkQuote({ customer: tpl.customer, title: tpl.title, status: won ? "converted" : pick(["declined", "expired", "declined"] as const), createdDay: d, sentDay: d, items: tpl.items, lostReason: won ? undefined : pick(["Price", "Timing — didn't need it after all", "Went with online printer", undefined]) });
   }
 
   // ---------- messages ----------
@@ -703,6 +713,11 @@ async function main() {
   const { mkdir, writeFile } = await import("node:fs/promises");
   const path = await import("node:path");
   const root = path.resolve(process.env.STORAGE_LOCAL_DIR ?? "./storage");
+  for (const key of artKeys) {
+    const p = path.join(root, key);
+    await mkdir(path.dirname(p), { recursive: true });
+    await writeFile(p, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600"><rect width="1200" height="600" fill="#1a8fe3"/><text x="600" y="320" text-anchor="middle" font-family="Arial" font-size="64" font-weight="700" fill="#fff">ARTWORK · ${path.basename(key, ".svg").replace("artwork-", "MP-")}</text></svg>`);
+  }
   for (const key of proofKeys) {
     const p = path.join(root, key);
     await mkdir(path.dirname(p), { recursive: true });

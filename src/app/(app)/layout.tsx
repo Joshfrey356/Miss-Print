@@ -34,9 +34,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     .where(and(eq(notifications.userId, user.id), isNull(notifications.readAt)));
 
   return (
-    <div className="min-h-dvh lg:pl-64">
+    <div className="min-h-dvh lg:pl-64 print:!pl-0">
       {/* Desktop sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r border-slate-200 bg-white lg:flex">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 print:!hidden flex-col border-r border-slate-200 bg-white lg:flex">
         <Link href="/dashboard" className="px-6 pb-5 pt-6">
           <Logo />
         </Link>
@@ -49,7 +49,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       </aside>
 
       {/* Top bar */}
-      <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 backdrop-blur">
+      <header className="sticky top-0 z-20 print:hidden border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="flex h-16 items-center gap-3 px-4 lg:px-8">
           <Link href="/dashboard" className="lg:hidden">
             <Logo compact />
@@ -68,7 +68,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       </header>
 
       <main className="mx-auto max-w-[1600px] px-4 pb-28 pt-6 lg:px-8 lg:pb-12">{children}</main>
-      <MobileTabBar allowed={allowed} />
+      <div className="print:hidden">
+        <MobileTabBar allowed={allowed} />
+      </div>
     </div>
   );
 }

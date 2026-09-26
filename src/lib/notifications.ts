@@ -49,5 +49,5 @@ export async function notify(input: NotifyInput, tx: Tx | typeof db = db) {
 
 /** Find @handles in a message body. */
 export function parseMentions(body: string): string[] {
-  return [...new Set([...body.matchAll(/(^|[^\w@])@([a-z][\w.-]{1,30})/gi)].map((m) => m[2]!.toLowerCase()))];
+  return [...new Set([...body.matchAll(/(^|[^\w@])@([a-z][\w.-]{0,30}[a-z0-9])/gi)].map((m) => m[2]!.toLowerCase()))];
 }
