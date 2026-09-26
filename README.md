@@ -75,6 +75,14 @@ Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS v4 · PostgreS
 - Business records are archived, not deleted. Invoices and payments are voided with a reason. Every important change is written to the activity log with before/after values.
 - Secrets live only in environment variables (`.env.local` is git-ignored).
 
+## Going live on Vercel + Supabase
+
+1. In Vercel → miss-print → Environment Variables, set `DATABASE_URL` (Supabase **Transaction pooler** URI, port 6543), `SUPABASE_URL`, `SUPABASE_SECRET_KEY` (the `sb_secret_…` key), `STORAGE_DRIVER=supabase` and `APP_URL`.
+2. Redeploy. Production builds run the database migrations automatically (`scripts/migrate.ts --deploy`).
+3. Open the site. On an empty database it sends you to **/setup** to create the owner account; that also loads locations, starter pricing, vendors and materials. `/setup` closes for good once a user exists.
+
+Uploads go to a private Supabase Storage bucket (`miss-print-files`, created automatically) and are only ever served through the permission-checked `/api/files` routes.
+
 ## Preview mode (no setup)
 
 If **no `DATABASE_URL` is set** (e.g. a fresh Vercel deploy), the app runs in **preview mode**: an in-memory Postgres (PGlite) loaded with the made-up demo data from `preview/demo.sql.gz`, with all dates shifted to look current. The sign-in page shows one-click "Enter as Owner / Production / …" buttons, no password needed. Changes are not permanent.

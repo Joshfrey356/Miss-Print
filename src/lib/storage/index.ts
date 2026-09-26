@@ -2,6 +2,7 @@ import "server-only";
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { StorageClient } from "@supabase/storage-js";
 
 /**
  * File storage abstraction. Swap drivers with STORAGE_DRIVER without touching app code.
@@ -44,16 +45,80 @@ class LocalStorage implements StorageProvider {
   }
 }
 
-// Future: SupabaseStorage / S3Storage implementing the same interface.
+/**
+ * Supabase Storage. Uses a PRIVATE bucket and the server-only secret (service role) key;
+ * files still only reach the browser through the permission-checked /api routes.
+ * The bucket is created automatically (private) on first upload if it doesn't exist.
+ */
+class SupabaseStorage implements StorageProvider {
+  private client: StorageClient;
+  private bucketReady: Promise<void> | null = null;
+  constructor(url: string, key: string, private bucket: string) {
+    this.client = new StorageClient(`${url.replace(/\/+$/, "")}/storage/v1`, { apikey: key, Authorization: `Bearer ${key}` });
+  }
+  private ensureBucket() {
+    this.bucketReady ??= (async () => {
+      const { error } = await this.client.getBucket(this.bucket);
+      if (!error) return;
+      const created = await this.client.createBucket(this.bucket, { public: false, fileSizeLimit: MAX_UPLOAD_BYTES });
+      if (created.error && !/already exists/i.test(created.error.message)) throw new Error(`Storage bucket "${this.bucket}": ${created.error.message}`);
+    })().catch((e) => {
+      this.bucketReady = null; // retry next time
+      throw e;
+    });
+    return this.bucketReady;
+  }
+  private files() {
+    return this.client.from(this.bucket);
+  }
+  async put(key: string, data: Buffer, contentType: string) {
+    await this.ensureBucket();
+    const { error } = await this.files().upload(key, data, { contentType: contentType || "application/octet-stream", upsert: false }); // never overwrite
+    if (error) throw new Error(`Storage upload failed: ${error.message}`);
+  }
+  async get(key: string) {
+    const { data, error } = await this.files().download(key);
+    if (error || !data) {
+      // Records imported from preview/demo data point at placeholder files that ship with the app.
+      try {
+        return await readFile(path.join(process.cwd(), "preview/storage", path.normalize(key).replace(/^(\.\.[/\\])+/, "")));
+      } catch {
+        throw new Error(`Storage download failed: ${error?.message ?? "not found"}`);
+      }
+    }
+    return Buffer.from(await data.arrayBuffer());
+  }
+  async exists(key: string) {
+    const { data } = await this.files().exists(key);
+    return Boolean(data);
+  }
+}
+
+/** Server-only Supabase key: the new secret key (sb_secret_…), or the legacy service_role key. */
+const supabaseSecretKey = () => (process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY)?.trim();
+
+/** Which storage driver is active: explicit STORAGE_DRIVER, else Supabase when its keys are set, else local disk. */
+export function storageDriverName(): "local" | "supabase" {
+  const explicit = process.env.STORAGE_DRIVER?.trim().toLowerCase();
+  if (explicit === "supabase" || explicit === "local") return explicit;
+  if (explicit) throw new Error(`Storage driver "${explicit}" is not supported. Use STORAGE_DRIVER=supabase or local.`);
+  return process.env.SUPABASE_URL && supabaseSecretKey() ? "supabase" : "local";
+}
 
 let instance: StorageProvider | null = null;
 export function storage(): StorageProvider {
   if (instance) return instance;
-  const driver = process.env.STORAGE_DRIVER ?? "local";
+  const driver = storageDriverName();
+  if (driver === "supabase") {
+    const url = process.env.SUPABASE_URL?.trim();
+    const key = supabaseSecretKey();
+    if (!url || !key) throw new Error("STORAGE_DRIVER=supabase needs SUPABASE_URL and SUPABASE_SECRET_KEY.");
+    instance = new SupabaseStorage(url, key, process.env.STORAGE_BUCKET?.trim() || "miss-print-files");
+    return instance;
+  }
   // Preview mode (no DATABASE_URL) writes to /tmp, the only writable place on serverless hosts.
   const dir = process.env.STORAGE_LOCAL_DIR ?? (process.env.DATABASE_URL ? "./storage" : "/tmp/miss-print-storage");
-  if (driver === "local") instance = new LocalStorage(path.resolve(dir));
-  else throw new Error(`Storage driver "${driver}" is not implemented yet. Use STORAGE_DRIVER=local.`);
+  instance = new LocalStorage(path.resolve(dir));
   return instance;
 }
 
