@@ -2,7 +2,7 @@ import "server-only";
 import { cache } from "react";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { and, eq, gt, sql } from "drizzle-orm";
 import { db, isPreviewMode } from "@/lib/db";
@@ -74,7 +74,39 @@ export async function signIn(
   return { ok: true };
 }
 
+// ---------------------------------------------------------------------------
+// Preview mode sessions are stateless (signed cookie), because on serverless hosts every
+// instance has its own in-memory demo database — a session row written by one instance
+// would be invisible to the next request. Only ever used with the built-in demo data.
+// ---------------------------------------------------------------------------
+const PREVIEW_PREFIX = "p.";
+const previewKey = () => process.env.PREVIEW_SECRET ?? process.env.VERCEL_DEPLOYMENT_ID ?? "miss-print-preview";
+const previewSig = (payload: string) => createHmac("sha256", previewKey()).update(payload).digest("base64url");
+
+function previewToken(userId: number) {
+  const payload = Buffer.from(JSON.stringify({ u: userId, e: Date.now() + SESSION_DAYS * DAY })).toString("base64url");
+  return `${PREVIEW_PREFIX}${payload}.${previewSig(payload)}`;
+}
+
+function readPreviewToken(token: string): number | null {
+  const [payload, sig] = token.slice(PREVIEW_PREFIX.length).split(".");
+  if (!payload || !sig) return null;
+  const want = Buffer.from(previewSig(payload));
+  const got = Buffer.from(sig);
+  if (want.length !== got.length || !timingSafeEqual(want, got)) return null;
+  try {
+    const { u, e } = JSON.parse(Buffer.from(payload, "base64url").toString()) as { u: number; e: number };
+    return typeof u === "number" && e > Date.now() ? u : null;
+  } catch {
+    return null;
+  }
+}
+
 async function startSession(userId: number, ip: string) {
+  if (isPreviewMode()) {
+    (await cookies()).set(SESSION_COOKIE, previewToken(userId), { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", maxAge: SESSION_DAYS * 24 * 60 * 60 });
+    return;
+  }
   const token = randomBytes(32).toString("base64url");
   const h = await headers();
   await db.insert(sessions).values({
@@ -110,7 +142,7 @@ export async function previewSignIn(email: string): Promise<{ ok: true } | { ok:
 export async function signOut() {
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE)?.value;
-  if (token) await db.delete(sessions).where(eq(sessions.id, hashToken(token)));
+  if (token && !token.startsWith(PREVIEW_PREFIX)) await db.delete(sessions).where(eq(sessions.id, hashToken(token)));
   jar.delete(SESSION_COOKIE);
 }
 
@@ -118,6 +150,18 @@ export async function signOut() {
 export const getCurrentUser = cache(async (): Promise<SessionUser | null> => {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
   if (!token) return null;
+  if (token.startsWith(PREVIEW_PREFIX)) {
+    // Preview cookies are only honored on the built-in demo database, never on real data.
+    const userId = isPreviewMode() ? readPreviewToken(token) : null;
+    if (!userId) return null;
+    const [u] = await db
+      .select({ id: users.id, name: users.name, handle: users.handle, email: users.email, role: users.role, color: users.color, locationId: users.locationId, title: users.title, active: users.active })
+      .from(users)
+      .where(eq(users.id, userId));
+    if (!u || !u.active) return null;
+    const { active: _a, ...user } = u;
+    return user;
+  }
   const id = hashToken(token);
   const [row] = await db
     .select({

@@ -19,9 +19,9 @@ export const metadata = { title: "Sign in" };
 
 export const dynamic = "force-dynamic";
 
-export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string }> }) {
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string; error?: string }> }) {
   if (await getCurrentUser()) redirect("/dashboard");
-  const { next } = await searchParams;
+  const { next, error } = await searchParams;
   return (
     <main className="flex min-h-dvh items-center justify-center bg-slate-50 px-4 py-12">
       <div className="w-full max-w-sm">
@@ -35,6 +35,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
             <p className="mt-1 text-sm text-slate-600">
               This preview runs on made-up demo data — nothing here is real, and changes may be reset. Pick a role to look around as that person:
             </p>
+            {error && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error.slice(0, 200)}</p>}
             <div className="mt-4 space-y-2">
               {PREVIEW_USERS.map((u) => (
                 <form key={u.email} action={previewLoginAction}>

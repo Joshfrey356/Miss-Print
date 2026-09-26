@@ -21,7 +21,13 @@ export async function logoutAction() {
 
 /** Preview mode: one-click demo sign-in (refused unless running on the built-in demo data). */
 export async function previewLoginAction(formData: FormData) {
-  const r = await previewSignIn(String(formData.get("email") ?? ""));
-  if (!r.ok) redirect("/login");
-  redirect("/dashboard");
+  let error: string | null = null;
+  try {
+    const r = await previewSignIn(String(formData.get("email") ?? ""));
+    if (!r.ok) error = r.error;
+  } catch (e) {
+    console.error("[preview] sign-in failed", e);
+    error = "The demo data is still loading or failed to load. Please try again in a few seconds.";
+  }
+  redirect(error ? `/login?error=${encodeURIComponent(error)}` : "/dashboard");
 }
