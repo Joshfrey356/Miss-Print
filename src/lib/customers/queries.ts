@@ -33,7 +33,7 @@ const escapeLike = (s: string) => s.replace(/[%_\\]/g, (m) => "\\" + m);
 const phoneDigitsSql = (col: SQL | typeof customers.phone) => sql`regexp_replace(coalesce(${col}, ''), '[^0-9]', '', 'g')`;
 
 /** Per-customer job aggregates (open jobs, last order date). */
-function jobAgg() {
+function jobAgg(tenantId: number) {
   return db
     .select({
       customerId: jobs.customerId,
@@ -43,13 +43,13 @@ function jobAgg() {
       ),
     })
     .from(jobs)
-    .where(isNull(jobs.archivedAt))
+    .where(and(eq(jobs.tenantId, tenantId), isNull(jobs.archivedAt)))
     .groupBy(jobs.customerId)
     .as("ja");
 }
 
 /** Per-customer invoice aggregates (balance, lifetime revenue, overdue). */
-function invAgg(now: string) {
+function invAgg(tenantId: number, now: string) {
   return db
     .select({
       customerId: invoices.customerId,
@@ -60,6 +60,7 @@ function invAgg(now: string) {
       overdue: sql<boolean>`coalesce(bool_or(${invoices.status} in ('sent','partial') and ${invoices.dueDate} < ${now}), false)`.as("overdue"),
     })
     .from(invoices)
+    .where(eq(invoices.tenantId, tenantId))
     .groupBy(invoices.customerId)
     .as("ia");
 }
@@ -81,7 +82,7 @@ export type CustomerListRow = {
   overdue: boolean;
 };
 
-export async function listCustomers(opts: {
+export async function listCustomers(tenantId: number, opts: {
   q?: string;
   filter?: CustomerFilter;
   sort?: CustomerSort;
@@ -91,8 +92,8 @@ export async function listCustomers(opts: {
   showMoney: boolean;
 }): Promise<{ rows: CustomerListRow[]; total: number; page: number }> {
   const now = today();
-  const ja = jobAgg();
-  const ia = invAgg(now);
+  const ja = jobAgg(tenantId);
+  const ia = invAgg(tenantId, now);
   const q = opts.q?.trim().slice(0, 100) ?? "";
   const conds: (SQL | undefined)[] = [];
 
@@ -137,7 +138,7 @@ export async function listCustomers(opts: {
       break;
   }
 
-  const where = and(...conds);
+  const where = and(eq(customers.tenantId, tenantId), ...conds);
   const dir = opts.dir === "desc" ? desc : asc;
   let sort = opts.sort;
   if ((sort === "balance" || sort === "revenue") && !opts.showMoney) sort = undefined;
@@ -218,38 +219,38 @@ export async function listCustomers(opts: {
 // ---------------------------------------------------------------------------
 // Single customer
 // ---------------------------------------------------------------------------
-export const getCustomer = cache(async (id: number) => {
+export const getCustomer = cache(async (tenantId: number, id: number) => {
   if (!Number.isInteger(id) || id <= 0) return null;
   const [row] = await db
     .select({ customer: customers, salesperson: { id: users.id, name: users.name, color: users.color } })
     .from(customers)
     .leftJoin(users, eq(users.id, customers.salespersonId))
-    .where(eq(customers.id, id))
+    .where(and(eq(customers.tenantId, tenantId), eq(customers.id, id)))
     .limit(1);
   if (!row) return null;
   return { ...row.customer, salesperson: row.salesperson?.id ? row.salesperson : null };
 });
 export type CustomerDetail = NonNullable<Awaited<ReturnType<typeof getCustomer>>>;
 
-export async function getContacts(customerId: number) {
+export async function getContacts(tenantId: number, customerId: number) {
   return db
     .select()
     .from(customerContacts)
-    .where(and(eq(customerContacts.customerId, customerId), isNull(customerContacts.archivedAt)))
+    .where(and(eq(customerContacts.tenantId, tenantId), eq(customerContacts.customerId, customerId), isNull(customerContacts.archivedAt)))
     .orderBy(desc(customerContacts.isPrimary), asc(customerContacts.name));
 }
 
-export async function getPrimaryContact(customerId: number) {
+export async function getPrimaryContact(tenantId: number, customerId: number) {
   const [c] = await db
     .select()
     .from(customerContacts)
-    .where(and(eq(customerContacts.customerId, customerId), isNull(customerContacts.archivedAt)))
+    .where(and(eq(customerContacts.tenantId, tenantId), eq(customerContacts.customerId, customerId), isNull(customerContacts.archivedAt)))
     .orderBy(desc(customerContacts.isPrimary), asc(customerContacts.id))
     .limit(1);
   return c ?? null;
 }
 
-export async function getCustomerStats(customerId: number, showMoney: boolean) {
+export async function getCustomerStats(tenantId: number, customerId: number, showMoney: boolean) {
   const now = today();
   const [j] = await db
     .select({
@@ -258,7 +259,7 @@ export async function getCustomerStats(customerId: number, showMoney: boolean) {
       lastOrder: sql<string | null>`(max((${jobs.createdAt} at time zone 'America/Chicago')::date) filter (where ${jobs.status} <> 'cancelled'))::text`,
     })
     .from(jobs)
-    .where(and(eq(jobs.customerId, customerId), isNull(jobs.archivedAt)));
+    .where(and(eq(jobs.tenantId, tenantId), eq(jobs.customerId, customerId), isNull(jobs.archivedAt)));
   let money: { revenue: number; balance: number; overdue: number; openInvoices: number } | null = null;
   if (showMoney) {
     const [i] = await db
@@ -269,7 +270,7 @@ export async function getCustomerStats(customerId: number, showMoney: boolean) {
         openInvoices: sql<number>`(count(*) filter (where ${invoices.status} in ('sent','partial')))::int`,
       })
       .from(invoices)
-      .where(eq(invoices.customerId, customerId));
+      .where(and(eq(invoices.tenantId, tenantId), eq(invoices.customerId, customerId)));
     money = { revenue: Number(i.revenue), balance: Number(i.balance), overdue: Number(i.overdue), openInvoices: Number(i.openInvoices) };
   }
   return { openJobs: Number(j.openJobs), totalJobs: Number(j.totalJobs), lastOrder: j.lastOrder, money };
@@ -278,6 +279,7 @@ export async function getCustomerStats(customerId: number, showMoney: boolean) {
 export type CustomerJobSort = "number" | "title" | "status" | "due" | "created" | "total";
 
 export async function getCustomerJobs(
+  tenantId: number,
   customerId: number,
   opts: { showMoney: boolean; openOnly?: boolean; sort?: CustomerJobSort; dir?: "asc" | "desc" },
 ) {
@@ -320,6 +322,7 @@ export async function getCustomerJobs(
     .from(jobs)
     .where(
       and(
+        eq(jobs.tenantId, tenantId),
         eq(jobs.customerId, customerId),
         isNull(jobs.archivedAt),
         opts.openOnly ? notInArray(jobs.status, [...CLOSED]) : undefined,
@@ -330,7 +333,7 @@ export async function getCustomerJobs(
   return rows.map((r) => ({ ...r, totalCents: opts.showMoney ? r.totalCents : null }));
 }
 
-export async function getCustomerQuotes(customerId: number, opts: { showMoney: boolean; openOnly?: boolean }) {
+export async function getCustomerQuotes(tenantId: number, customerId: number, opts: { showMoney: boolean; openOnly?: boolean }) {
   const rows = await db
     .select({
       id: quotes.id,
@@ -345,6 +348,7 @@ export async function getCustomerQuotes(customerId: number, opts: { showMoney: b
     .from(quotes)
     .where(
       and(
+        eq(quotes.tenantId, tenantId),
         eq(quotes.customerId, customerId),
         isNull(quotes.archivedAt),
         opts.openOnly ? inArray(quotes.status, ["draft", "sent", "accepted"]) : undefined,
@@ -355,7 +359,7 @@ export async function getCustomerQuotes(customerId: number, opts: { showMoney: b
   return rows.map((r) => ({ ...r, totalCents: opts.showMoney ? r.totalCents : null }));
 }
 
-export async function getCustomerInvoices(customerId: number) {
+export async function getCustomerInvoices(tenantId: number, customerId: number) {
   return db
     .select({
       id: invoices.id,
@@ -369,12 +373,12 @@ export async function getCustomerInvoices(customerId: number) {
     })
     .from(invoices)
     .leftJoin(jobs, eq(jobs.id, invoices.jobId))
-    .where(eq(invoices.customerId, customerId))
+    .where(and(eq(invoices.tenantId, tenantId), eq(invoices.customerId, customerId)))
     .orderBy(desc(invoices.issueDate), desc(invoices.id))
     .limit(300);
 }
 
-export async function getCustomerFiles(customerId: number) {
+export async function getCustomerFiles(tenantId: number, customerId: number) {
   return db
     .select({
       id: files.id,
@@ -389,12 +393,12 @@ export async function getCustomerFiles(customerId: number) {
     .from(files)
     .leftJoin(jobs, eq(jobs.id, files.jobId))
     .leftJoin(users, eq(users.id, files.uploadedBy))
-    .where(and(eq(files.customerId, customerId), isNull(files.archivedAt)))
+    .where(and(eq(files.tenantId, tenantId), eq(files.customerId, customerId), isNull(files.archivedAt)))
     .orderBy(desc(files.createdAt))
     .limit(500);
 }
 
-export async function getCustomerCommunications(customerId: number, opts: { showMoney: boolean; showPrices?: boolean }) {
+export async function getCustomerCommunications(tenantId: number, customerId: number, opts: { showMoney: boolean; showPrices?: boolean }) {
   return db
     .select({
       id: communications.id,
@@ -413,6 +417,7 @@ export async function getCustomerCommunications(customerId: number, opts: { show
     .leftJoin(users, eq(users.id, communications.sentBy))
     .where(
       and(
+        eq(communications.tenantId, tenantId),
         eq(communications.customerId, customerId),
         // Invoice emails/reminders contain amounts — hide them from roles that can't see money.
         opts.showMoney ? undefined : isNull(communications.invoiceId),
@@ -424,7 +429,7 @@ export async function getCustomerCommunications(customerId: number, opts: { show
     .limit(200);
 }
 
-export async function getCustomerActivity(customerId: number, opts: { showMoney: boolean; showCost?: boolean; limit?: number }) {
+export async function getCustomerActivity(tenantId: number, customerId: number, opts: { showMoney: boolean; showCost?: boolean; limit?: number }) {
   const rows = await db
     .select({
       id: activityLogs.id,
@@ -441,6 +446,7 @@ export async function getCustomerActivity(customerId: number, opts: { showMoney:
     .leftJoin(jobs, eq(jobs.id, activityLogs.jobId))
     .where(
       and(
+        eq(activityLogs.tenantId, tenantId),
         eq(activityLogs.customerId, customerId),
         opts.showMoney
           ? undefined
@@ -459,14 +465,14 @@ export async function getCustomerActivity(customerId: number, opts: { showMoney:
 // Forms
 // ---------------------------------------------------------------------------
 /** People who can be assigned as a customer's salesperson. */
-export async function getSalespeople() {
-  return (await getActiveUsers()).filter((u) => u.role === "owner" || u.role === "manager" || u.role === "sales");
+export async function getSalespeople(tenantId: number) {
+  return (await getActiveUsers(tenantId)).filter((u) => u.role === "owner" || u.role === "manager" || u.role === "sales");
 }
 
 export type DuplicateMatch = { id: number; name: string; reason: string; city: string | null; archived: boolean };
 
 /** Possible duplicates: similar name, same phone, or same email (customer or contact). */
-export async function findDuplicateCustomers(input: {
+export async function findDuplicateCustomers(tenantId: number, input: {
   name?: string | null;
   phone?: string | null;
   email?: string | null;
@@ -500,7 +506,7 @@ export async function findDuplicateCustomers(input: {
       sim,
     })
     .from(customers)
-    .where(and(or(...conds), input.excludeId ? ne(customers.id, input.excludeId) : undefined))
+    .where(and(eq(customers.tenantId, tenantId), or(...conds), input.excludeId ? ne(customers.id, input.excludeId) : undefined))
     .orderBy(desc(sim), asc(customers.id))
     .limit(5);
   return rows.map((r) => {
@@ -514,14 +520,14 @@ export async function findDuplicateCustomers(input: {
 }
 
 /** Counts for the customer page tabs. */
-export async function getCustomerCounts(customerId: number, opts: { showMoney: boolean }) {
+export async function getCustomerCounts(tenantId: number, customerId: number, opts: { showMoney: boolean }) {
   const [r] = await db.execute<{ jobs: number; quotes: number; invoices: number; files: number; comms: number }>(sql`
     select
-      (select count(*)::int from ${jobs} where customer_id = ${customerId} and archived_at is null) as jobs,
-      (select count(*)::int from ${quotes} where customer_id = ${customerId} and archived_at is null) as quotes,
-      (select count(*)::int from ${invoices} where customer_id = ${customerId}) as invoices,
-      (select count(*)::int from ${files} where customer_id = ${customerId} and archived_at is null) as files,
-      (select count(*)::int from ${communications} where customer_id = ${customerId} ${opts.showMoney ? sql`` : sql`and invoice_id is null`}) as comms
+      (select count(*)::int from ${jobs} where tenant_id = ${tenantId} and customer_id = ${customerId} and archived_at is null) as jobs,
+      (select count(*)::int from ${quotes} where tenant_id = ${tenantId} and customer_id = ${customerId} and archived_at is null) as quotes,
+      (select count(*)::int from ${invoices} where tenant_id = ${tenantId} and customer_id = ${customerId}) as invoices,
+      (select count(*)::int from ${files} where tenant_id = ${tenantId} and customer_id = ${customerId} and archived_at is null) as files,
+      (select count(*)::int from ${communications} where tenant_id = ${tenantId} and customer_id = ${customerId} ${opts.showMoney ? sql`` : sql`and invoice_id is null`}) as comms
   `);
   return {
     jobs: Number(r?.jobs ?? 0),

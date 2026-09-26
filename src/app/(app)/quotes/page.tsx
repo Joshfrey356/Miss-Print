@@ -23,7 +23,7 @@ export default async function QuotesPage({ searchParams }: { searchParams: Promi
   const user = await requirePagePermission("quotes.view");
   const sp = await searchParams;
   const view = sp.view ?? "open";
-  const [{ rows, total, value, page, pageSize }, counts] = await Promise.all([listQuotes({ ...sp, view, page: Number(sp.page) || 1 }), quoteCounts()]);
+  const [{ rows, total, value, page, pageSize }, counts] = await Promise.all([listQuotes(user.tenantId, { ...sp, view, page: Number(sp.page) || 1 }), quoteCounts(user.tenantId)]);
   const showMoney = can(user.role, "financials.view");
   const params = { q: sp.q, view: sp.view, sort: sp.sort, dir: sp.dir };
 

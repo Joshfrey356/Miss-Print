@@ -9,9 +9,10 @@ import { forbidden, sameOrigin } from "@/lib/http";
 export async function GET() {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  const mine = and(eq(notifications.tenantId, user.tenantId), eq(notifications.userId, user.id));
   const [items, [{ unread }]] = await Promise.all([
-    db.select().from(notifications).where(eq(notifications.userId, user.id)).orderBy(desc(notifications.createdAt)).limit(20),
-    db.select({ unread: count() }).from(notifications).where(and(eq(notifications.userId, user.id), isNull(notifications.readAt))),
+    db.select().from(notifications).where(mine).orderBy(desc(notifications.createdAt)).limit(20),
+    db.select({ unread: count() }).from(notifications).where(and(mine, isNull(notifications.readAt))),
   ]);
   return NextResponse.json({ unread, items });
 }
@@ -24,10 +25,10 @@ export async function POST(req: Request) {
   if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   const parsed = Body.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Bad request" }, { status: 400 });
-  const where =
-    "all" in parsed.data
-      ? and(eq(notifications.userId, user.id), isNull(notifications.readAt))
-      : and(eq(notifications.userId, user.id), eq(notifications.id, parsed.data.id));
-  await db.update(notifications).set({ readAt: new Date() }).where(where);
+  const which = "all" in parsed.data ? isNull(notifications.readAt) : eq(notifications.id, parsed.data.id);
+  await db
+    .update(notifications)
+    .set({ readAt: new Date() })
+    .where(and(eq(notifications.tenantId, user.tenantId), eq(notifications.userId, user.id), which));
   return NextResponse.json({ ok: true });
 }

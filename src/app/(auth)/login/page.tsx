@@ -1,10 +1,12 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { Logo } from "@/components/logo";
 import { LoginForm } from "./login-form";
 import { isPreviewMode } from "@/lib/db";
 import { previewLoginAction } from "./actions";
-import { getSetupState } from "@/lib/setup";
+import { getSetupState, signupMode } from "@/lib/setup";
+import { getVisitorBrand, PLATFORM_NAME } from "@/lib/brand";
 
 const PREVIEW_USERS = [
   { email: "owner@missprintusa.com", label: "Owner / Admin", who: "Rick — everything, incl. money & settings" },
@@ -20,16 +22,18 @@ export const metadata = { title: "Sign in" };
 
 export const dynamic = "force-dynamic";
 
-export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string; error?: string }> }) {
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string; error?: string; shop?: string }> }) {
   if (!isPreviewMode() && (await getSetupState()).state === "needs_setup") redirect("/setup");
   if (await getCurrentUser()) redirect("/dashboard");
-  const { next, error } = await searchParams;
+  const { next, error, shop } = await searchParams;
+  // White-label: the shop from ?shop=<slug>, or the one last signed in on this device.
+  const brand = await getVisitorBrand(shop);
   return (
     <main className="flex min-h-dvh items-center justify-center bg-slate-50 px-4 py-12">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center text-center">
-          <Logo className="scale-150" />
-          <p className="mt-8 text-sm font-medium uppercase tracking-[0.18em] text-slate-500">Command Center</p>
+          <Logo brand={brand} fallbackName={PLATFORM_NAME} className="origin-center scale-150" />
+          <p className="mt-8 text-sm font-medium uppercase tracking-[0.18em] text-slate-500">{brand ? "Command Center" : "Sign in"}</p>
         </div>
         {isPreviewMode() ? (
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -59,7 +63,15 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
             <LoginForm next={next} demo={process.env.NODE_ENV !== "production" || process.env.SHOW_DEMO_LOGINS === "1"} />
           </div>
         )}
-        <p className="mt-6 text-center text-xs text-slate-400">Miss Print · Munster & Hammond, Indiana · Since 1986</p>
+        {!isPreviewMode() && signupMode() !== "off" && (
+          <p className="mt-6 text-center text-sm text-slate-500">
+            New print shop?{" "}
+            <Link href="/signup" className="font-medium text-brand-700 hover:underline">
+              Create your shop account
+            </Link>
+          </p>
+        )}
+        <p className="mt-4 text-center text-xs text-slate-400">{brand ? `${brand.name} · ${PLATFORM_NAME}` : PLATFORM_NAME}</p>
       </div>
     </main>
   );

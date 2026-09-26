@@ -19,11 +19,11 @@ function Margin({ v, muted }: { v: number | null; muted?: boolean }) {
   return <Num className={cn("font-medium", muted ? "text-slate-600" : low ? "text-red-700" : "text-emerald-700")}>{pct(v)}</Num>;
 }
 
-export async function ProfitabilityTab({ params }: { params: SP }) {
+export async function ProfitabilityTab({ tenantId, params }: { tenantId: number; params: SP }) {
   const now = today();
   const from = isYmd(params.from) ? params.from! : addDays(now, -90);
   const to = isYmd(params.to) ? params.to! : now;
-  const data = await getProfitability({ from, to, sort: params.sort, dir: params.dir, page: params.page, low: params.low });
+  const data = await getProfitability(tenantId, { from, to, sort: params.sort, dir: params.dir, page: params.page, low: params.low });
   const p = { ...params, tab: "profitability" };
   const s = data.summary;
   const overall = marginOf(s.revenue, s.cost);

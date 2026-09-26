@@ -1,11 +1,12 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { communications, customerContacts, customers, jobItems, jobs, quoteItems, quotes } from "@/lib/db/schema";
+import { communications, customerContacts, customers, jobItems, jobs, locations, materials, productCategories, quoteItems, quotes, users } from "@/lib/db/schema";
 import { requirePermission } from "@/lib/auth";
+import { nextNumber } from "@/lib/tenant";
 import { can } from "@/lib/permissions";
 import { runAction, UserError } from "@/lib/actions";
 import { logActivity } from "@/lib/activity";
@@ -42,13 +43,13 @@ export async function priceQuoteItem(input: ItemPricingRequest) {
   return runAction(async () => {
     const user = await requirePermission("quotes.edit");
     const req = PricingReq.parse(input);
-    return publicResult(await priceItem(req), can(user.role, "margins.view"));
+    return publicResult(await priceItem(user.tenantId, req), can(user.role, "margins.view"));
   });
 }
 
 export async function similarJobs(input: SimilarQuery) {
   return runAction(async () => {
-    await requirePermission("quotes.view");
+    const user = await requirePermission("quotes.view");
     const q = z
       .object({
         categoryId: z.number().int().nullable().optional(),
@@ -59,20 +60,20 @@ export async function similarJobs(input: SimilarQuery) {
         customerId: z.number().int().nullable().optional(),
       })
       .parse(input);
-    return findSimilarJobs(q);
+    return findSimilarJobs(user.tenantId, q);
   });
 }
 
 /** Current recommended price for reordering a job's first line at a quantity. */
 export async function quoteReorderPrice(jobId: number, quantity: number) {
   return runAction(async () => {
-    await requirePermission("financials.view");
-    const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));
+    const user = await requirePermission("financials.view");
+    const [job] = await db.select().from(jobs).where(and(eq(jobs.tenantId, user.tenantId), eq(jobs.id, jobId)));
     if (!job) throw new UserError("Job not found.");
-    const [item] = await db.select().from(jobItems).where(eq(jobItems.jobId, jobId)).orderBy(asc(jobItems.sortOrder)).limit(1);
+    const [item] = await db.select().from(jobItems).where(and(eq(jobItems.tenantId, user.tenantId), eq(jobItems.jobId, jobId))).orderBy(asc(jobItems.sortOrder)).limit(1);
     if (!item) return { recommendedCents: null };
     const input = (item.pricingInput ?? {}) as Partial<ItemPricingRequest>;
-    const r = await priceItem({
+    const r = await priceItem(user.tenantId, {
       ...input,
       categoryId: item.categoryId,
       quantity: Math.max(1, Math.round(quantity)),
@@ -129,13 +130,40 @@ const Quote = z.object({
 });
 export type QuotePayload = z.infer<typeof Quote>;
 
+/** Ids picked in the builder must belong to this shop: another shop's ids are simply "not found". */
+async function checkQuoteRefs(tenantId: number, data: QuotePayload) {
+  if (data.contactId) {
+    const [c] = await db.select({ id: customerContacts.id }).from(customerContacts).where(and(eq(customerContacts.tenantId, tenantId), eq(customerContacts.id, data.contactId)));
+    if (!c) throw new UserError("Contact not found.");
+  }
+  if (data.salespersonId) {
+    const [u] = await db.select({ id: users.id }).from(users).where(and(eq(users.tenantId, tenantId), eq(users.id, data.salespersonId)));
+    if (!u) throw new UserError("Salesperson not found.");
+  }
+  if (data.locationId) {
+    const [l] = await db.select({ id: locations.id }).from(locations).where(and(eq(locations.tenantId, tenantId), eq(locations.id, data.locationId)));
+    if (!l) throw new UserError("Location not found.");
+  }
+  const catIds = [...new Set(data.items.map((i) => i.categoryId).filter((x): x is number => x != null))];
+  if (catIds.length) {
+    const found = await db.select({ id: productCategories.id }).from(productCategories).where(and(eq(productCategories.tenantId, tenantId), inArray(productCategories.id, catIds)));
+    if (found.length !== catIds.length) throw new UserError("Product category not found.");
+  }
+  const matIds = [...new Set(data.items.map((i) => i.materialId).filter((x): x is number => x != null))];
+  if (matIds.length) {
+    const found = await db.select({ id: materials.id }).from(materials).where(and(eq(materials.tenantId, tenantId), inArray(materials.id, matIds)));
+    if (found.length !== matIds.length) throw new UserError("Material not found.");
+  }
+}
+
 export async function saveQuote(payload: QuotePayload) {
   return runAction(async () => {
     const user = await requirePermission("quotes.edit");
     const data = Quote.parse(payload);
-    const [cust] = await db.select().from(customers).where(eq(customers.id, data.customerId));
+    const [cust] = await db.select().from(customers).where(and(eq(customers.tenantId, user.tenantId), eq(customers.id, data.customerId)));
     if (!cust) throw new UserError("Customer not found.");
-    const { rules, quoteValidDays } = await getSettings();
+    await checkQuoteRefs(user.tenantId, data);
+    const { rules, quoteValidDays } = await getSettings(user.tenantId);
 
     // Authoritative pricing on the server.
     const priced = await Promise.all(
@@ -157,7 +185,7 @@ export async function saveQuote(payload: QuotePayload) {
           customBaseCents: i.customBaseCents,
           customerId: data.customerId,
         };
-        const r = await priceItem(req);
+        const r = await priceItem(user.tenantId, req);
         const { customerId: _c, ...pricingInput } = req;
         return {
           categoryId: i.categoryId,
@@ -208,16 +236,17 @@ export async function saveQuote(payload: QuotePayload) {
 
     const id = await db.transaction(async (tx) => {
       if (data.id) {
-        const [before] = await tx.select().from(quotes).where(eq(quotes.id, data.id)).for("update");
+        const [before] = await tx.select().from(quotes).where(and(eq(quotes.tenantId, user.tenantId), eq(quotes.id, data.id))).for("update");
         if (!before) throw new UserError("Quote not found.");
         if (before.status === "converted") throw new UserError("This quote was already converted to a job. Edit the job instead.");
-        const beforeItems = await tx.select().from(quoteItems).where(eq(quoteItems.quoteId, data.id));
-        await tx.update(quotes).set(header).where(eq(quotes.id, data.id));
-        await tx.delete(quoteItems).where(eq(quoteItems.quoteId, data.id));
-        await tx.insert(quoteItems).values(priced.map((p) => ({ ...p, quoteId: data.id! })));
+        const beforeItems = await tx.select().from(quoteItems).where(and(eq(quoteItems.tenantId, user.tenantId), eq(quoteItems.quoteId, data.id)));
+        await tx.update(quotes).set(header).where(and(eq(quotes.tenantId, user.tenantId), eq(quotes.id, data.id)));
+        await tx.delete(quoteItems).where(and(eq(quoteItems.tenantId, user.tenantId), eq(quoteItems.quoteId, data.id)));
+        await tx.insert(quoteItems).values(priced.map((p) => ({ ...p, tenantId: user.tenantId, quoteId: data.id! })));
         if (before.subtotalCents !== subtotal) {
           await logActivity(
             {
+              tenantId: user.tenantId,
               action: "quote.price_changed",
               entityType: "quote",
               entityId: data.id,
@@ -230,13 +259,14 @@ export async function saveQuote(payload: QuotePayload) {
             tx,
           );
         } else {
-          await logActivity({ action: "quote.updated", entityType: "quote", entityId: data.id, quoteId: data.id, customerId: data.customerId, actorId: user.id, summary: "Edited quote" }, tx);
+          await logActivity({ tenantId: user.tenantId, action: "quote.updated", entityType: "quote", entityId: data.id, quoteId: data.id, customerId: data.customerId, actorId: user.id, summary: "Edited quote" }, tx);
         }
         return data.id;
       }
-      const [q] = await tx.insert(quotes).values({ ...header, status: "draft", createdBy: user.id }).returning();
-      await tx.insert(quoteItems).values(priced.map((p) => ({ ...p, quoteId: q!.id })));
-      await logActivity({ action: "quote.created", entityType: "quote", entityId: q!.id, quoteId: q!.id, customerId: data.customerId, actorId: user.id, summary: `Created quote for ${money(subtotal)}` }, tx);
+      const number = await nextNumber(tx, user.tenantId, "quote");
+      const [q] = await tx.insert(quotes).values({ ...header, tenantId: user.tenantId, number, status: "draft", createdBy: user.id }).returning();
+      await tx.insert(quoteItems).values(priced.map((p) => ({ ...p, tenantId: user.tenantId, quoteId: q!.id })));
+      await logActivity({ tenantId: user.tenantId, action: "quote.created", entityType: "quote", entityId: q!.id, quoteId: q!.id, customerId: data.customerId, actorId: user.id, summary: `Created quote for ${money(subtotal)}` }, tx);
       return q!.id;
     });
     revalidatePath("/quotes");
@@ -249,8 +279,8 @@ export async function saveQuote(payload: QuotePayload) {
 // ---------------------------------------------------------------------------
 // Status changes
 // ---------------------------------------------------------------------------
-async function loadQuote(id: number) {
-  const [q] = await db.select().from(quotes).where(eq(quotes.id, id));
+async function loadQuote(tenantId: number, id: number) {
+  const [q] = await db.select().from(quotes).where(and(eq(quotes.tenantId, tenantId), eq(quotes.id, id)));
   if (!q) throw new UserError("Quote not found.");
   return q;
 }
@@ -259,14 +289,14 @@ async function loadQuote(id: number) {
 export async function sendQuote(id: number, opts: { email: string | null; message: string | null }) {
   return runAction(async () => {
     const user = await requirePermission("quotes.edit");
-    const q = await loadQuote(id);
+    const q = await loadQuote(user.tenantId, id);
     if (q.status === "converted") throw new UserError("This quote is already a job.");
     let sentTo: string | null = null;
     if (opts.email) {
       const email = z.string().email("Enter a valid email address.").parse(opts.email.trim());
-      const items = await db.select().from(quoteItems).where(eq(quoteItems.quoteId, id)).orderBy(asc(quoteItems.sortOrder));
-      const [contact] = q.contactId ? await db.select().from(customerContacts).where(eq(customerContacts.id, q.contactId)) : [];
-      const { company } = await getSettings();
+      const items = await db.select().from(quoteItems).where(and(eq(quoteItems.tenantId, user.tenantId), eq(quoteItems.quoteId, id))).orderBy(asc(quoteItems.sortOrder));
+      const [contact] = q.contactId ? await db.select().from(customerContacts).where(and(eq(customerContacts.tenantId, user.tenantId), eq(customerContacts.id, q.contactId))) : [];
+      const { company } = await getSettings(user.tenantId);
       const subject = `Your quote from ${company.name}: ${q.title} (${quoteNo(q.number)})`;
       const text = [
         `Hello${contact ? ` ${contact.name.split(" ")[0]}` : ""},`,
@@ -286,13 +316,13 @@ export async function sendQuote(id: number, opts: { email: string | null; messag
         ``,
         `${company.name} · ${company.address}`,
       ].join("\n");
-      const res = await emailProvider().send({ to: email, subject, text, replyTo: company.email });
+      const res = await emailProvider().send({ to: email, subject, text, fromName: company.name, replyTo: company.email || undefined });
       if (!res.ok) throw new UserError("The email could not be sent.");
-      await db.insert(communications).values({ customerId: q.customerId, quoteId: q.id, channel: "email", template: "quote_ready", toAddress: email, subject, body: text, status: "sent", providerId: res.providerId, sentBy: user.id });
+      await db.insert(communications).values({ tenantId: user.tenantId, customerId: q.customerId, quoteId: q.id, channel: "email", template: "quote_ready", toAddress: email, subject, body: text, status: "sent", providerId: res.providerId, sentBy: user.id });
       sentTo = email;
     }
-    await db.update(quotes).set({ status: "sent", sentAt: new Date(), updatedAt: new Date() }).where(eq(quotes.id, id));
-    await logActivity({ action: "quote.sent", entityType: "quote", entityId: id, quoteId: id, customerId: q.customerId, actorId: user.id, summary: sentTo ? `Emailed quote to ${sentTo}` : "Marked quote as sent" });
+    await db.update(quotes).set({ status: "sent", sentAt: new Date(), updatedAt: new Date() }).where(and(eq(quotes.tenantId, user.tenantId), eq(quotes.id, id)));
+    await logActivity({ tenantId: user.tenantId, action: "quote.sent", entityType: "quote", entityId: id, quoteId: id, customerId: q.customerId, actorId: user.id, summary: sentTo ? `Emailed quote to ${sentTo}` : "Marked quote as sent" });
     revalidatePath(`/quotes/${id}`);
     revalidatePath("/quotes");
   }, "Quote sent");
@@ -303,14 +333,14 @@ export async function setQuoteOutcome(id: number, outcome: "accepted" | "decline
     const user = await requirePermission("quotes.edit");
     // Server Actions can be called with any value: never let a client set e.g. "converted".
     outcome = z.enum(["accepted", "declined", "expired", "draft"]).parse(outcome);
-    const q = await loadQuote(id);
+    const q = await loadQuote(user.tenantId, id);
     if (q.status === "converted") throw new UserError("This quote is already a job.");
     await db
       .update(quotes)
       .set({ status: outcome, respondedAt: outcome === "draft" ? null : new Date(), lostReason: outcome === "declined" || outcome === "expired" ? (reason?.trim() || null) : null, updatedAt: new Date() })
-      .where(eq(quotes.id, id));
+      .where(and(eq(quotes.tenantId, user.tenantId), eq(quotes.id, id)));
     const label = { accepted: "Customer accepted quote", declined: `Quote declined${reason ? `: ${reason}` : ""}`, expired: "Quote marked expired", draft: "Quote reopened as draft" }[outcome];
-    await logActivity({ action: `quote.${outcome}`, entityType: "quote", entityId: id, quoteId: id, customerId: q.customerId, actorId: user.id, summary: label });
+    await logActivity({ tenantId: user.tenantId, action: `quote.${outcome}`, entityType: "quote", entityId: id, quoteId: id, customerId: q.customerId, actorId: user.id, summary: label });
     revalidatePath(`/quotes/${id}`);
     revalidatePath("/quotes");
     revalidatePath("/dashboard");
@@ -321,9 +351,9 @@ export async function setQuoteOutcome(id: number, outcome: "accepted" | "decline
 export async function convertQuote(id: number) {
   const result = await runAction(async () => {
     const user = await requirePermission("jobs.create");
-    const q = await loadQuote(id);
+    const q = await loadQuote(user.tenantId, id);
     if (q.status === "declined" || q.status === "expired") throw new UserError("Reopen this quote before converting it.");
-    const job = await convertQuoteToJob(id, { id: user.id, name: user.name });
+    const job = await convertQuoteToJob(id, user);
     revalidatePath("/quotes");
     revalidatePath("/jobs");
     revalidatePath("/dashboard");
@@ -336,14 +366,15 @@ export async function convertQuote(id: number) {
 export async function duplicateQuote(id: number) {
   const result = await runAction(async () => {
     const user = await requirePermission("quotes.edit");
-    const q = await loadQuote(id);
-    const items = await db.select().from(quoteItems).where(eq(quoteItems.quoteId, id));
-    const { quoteValidDays } = await getSettings();
+    const q = await loadQuote(user.tenantId, id);
+    const items = await db.select().from(quoteItems).where(and(eq(quoteItems.tenantId, user.tenantId), eq(quoteItems.quoteId, id)));
+    const { quoteValidDays } = await getSettings(user.tenantId);
     const newId = await db.transaction(async (tx) => {
       const { id: _i, number: _n, createdAt: _c, sentAt: _s, respondedAt: _r, status: _st, lostReason: _l, archivedAt: _a, ...rest } = q;
-      const [n] = await tx.insert(quotes).values({ ...rest, title: q.title, status: "draft", validUntil: addDays(today(), quoteValidDays), createdBy: user.id, updatedAt: new Date() }).returning();
+      const number = await nextNumber(tx, user.tenantId, "quote");
+      const [n] = await tx.insert(quotes).values({ ...rest, number, title: q.title, status: "draft", validUntil: addDays(today(), quoteValidDays), createdBy: user.id, updatedAt: new Date() }).returning();
       if (items.length) await tx.insert(quoteItems).values(items.map(({ id: _x, quoteId: _q, ...i }) => ({ ...i, quoteId: n!.id })));
-      await logActivity({ action: "quote.created", entityType: "quote", entityId: n!.id, quoteId: n!.id, customerId: q.customerId, actorId: user.id, summary: `Copied from ${quoteNo(q.number)}` }, tx);
+      await logActivity({ tenantId: user.tenantId, action: "quote.created", entityType: "quote", entityId: n!.id, quoteId: n!.id, customerId: q.customerId, actorId: user.id, summary: `Copied from ${quoteNo(q.number)}` }, tx);
       return n!.id;
     });
     return { id: newId };
@@ -355,9 +386,9 @@ export async function duplicateQuote(id: number) {
 export async function archiveQuote(id: number) {
   return runAction(async () => {
     const user = await requirePermission("quotes.edit");
-    const q = await loadQuote(id);
-    await db.update(quotes).set({ archivedAt: new Date() }).where(and(eq(quotes.id, id)));
-    await logActivity({ action: "quote.archived", entityType: "quote", entityId: id, quoteId: id, customerId: q.customerId, actorId: user.id, summary: "Archived quote" });
+    const q = await loadQuote(user.tenantId, id);
+    await db.update(quotes).set({ archivedAt: new Date() }).where(and(eq(quotes.tenantId, user.tenantId), eq(quotes.id, id)));
+    await logActivity({ tenantId: user.tenantId, action: "quote.archived", entityType: "quote", entityId: id, quoteId: id, customerId: q.customerId, actorId: user.id, summary: "Archived quote" });
     revalidatePath("/quotes");
   }, "Quote archived");
 }

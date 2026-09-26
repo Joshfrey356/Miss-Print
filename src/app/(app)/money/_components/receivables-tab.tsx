@@ -23,9 +23,9 @@ const BUCKET_TONE: Record<AgingBucket, string> = {
 
 const bucketLabel = (b: AgingBucket) => (b === "current" ? "Current (not due)" : `${AGING_LABELS[b].replace(" days", "")} days late`);
 
-export async function ReceivablesTab({ params, canEdit }: { params: SP; canEdit: boolean }) {
+export async function ReceivablesTab({ tenantId, params, canEdit }: { tenantId: number; params: SP; canEdit: boolean }) {
   const now = today();
-  const all = (await getReceivables()).map((r) => ({ ...r, bucket: agingBucket(r.dueDate, now), age: Math.max(0, daysBetween(r.dueDate, now)) }));
+  const all = (await getReceivables(tenantId)).map((r) => ({ ...r, bucket: agingBucket(r.dueDate, now), age: Math.max(0, daysBetween(r.dueDate, now)) }));
   const p = { ...params, tab: "receivables" };
   const bucket = BUCKETS.includes(params.bucket as AgingBucket) ? (params.bucket as AgingBucket) : undefined;
   const grouped = params.group === "customer";

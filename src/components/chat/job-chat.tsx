@@ -7,7 +7,7 @@ export type { ChatMessage, ChatUser } from "@/lib/messages/types";
 /**
  * Job chat — drop into the job page:
  *
- *   const [messages, users] = await Promise.all([getJobMessages(job.id), getActiveUsers()]);
+ *   const [messages, users] = await Promise.all([getJobMessages(user.tenantId, job.id), getActiveUsers(user.tenantId)]);
  *   <JobChat jobId={job.id} jobNumber={job.number} messages={messages} users={users} currentUserId={user.id} />
  *
  * Posts through postMessage() (lib/messages/actions), which handles @mentions, notifications,

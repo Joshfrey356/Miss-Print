@@ -36,8 +36,11 @@ type Tile = { href: string; label: string; hint: string; icon: LucideIcon; perm?
 export default async function MorePage() {
   const user = await requireUser();
   const [[{ unread }], dueTasks] = await Promise.all([
-    db.select({ unread: count() }).from(notifications).where(and(eq(notifications.userId, user.id), isNull(notifications.readAt))),
-    can(user.role, "tasks.use") ? countMyDueTasks(user.id, today()) : Promise.resolve(0),
+    db
+      .select({ unread: count() })
+      .from(notifications)
+      .where(and(eq(notifications.tenantId, user.tenantId), eq(notifications.userId, user.id), isNull(notifications.readAt))),
+    can(user.role, "tasks.use") ? countMyDueTasks(user.tenantId, user.id, today()) : Promise.resolve(0),
   ]);
 
   const tiles: Tile[] = [

@@ -1,6 +1,7 @@
 import { CheckCircle2, CircleDashed, FlaskConical } from "lucide-react";
 import { requirePagePermission } from "@/lib/auth";
 import { getIntegrationStatuses } from "@/lib/admin/integrations";
+import { getSettings } from "@/lib/settings";
 import { Badge, type Tone } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { SettingsPage } from "../_components/settings-page";
@@ -11,8 +12,9 @@ const TONE: Record<string, Tone> = { connected: "green", dev: "amber", not_conne
 const ICON = { connected: CheckCircle2, dev: FlaskConical, not_connected: CircleDashed, planned: CircleDashed };
 
 export default async function IntegrationsPage() {
-  await requirePagePermission("settings.manage");
-  const items = getIntegrationStatuses();
+  const user = await requirePagePermission("settings.manage");
+  const { company } = await getSettings(user.tenantId);
+  const items = getIntegrationStatuses(company);
   return (
     <SettingsPage
       title="Integrations"

@@ -53,35 +53,35 @@ export function paymentReminderEmail(p: {
 }
 
 /** Best email for billing: customer email, then primary contact, then any contact. */
-async function billingEmail(customerId: number) {
-  const [cust] = await db.select({ email: customers.email }).from(customers).where(eq(customers.id, customerId));
+async function billingEmail(tenantId: number, customerId: number) {
+  const [cust] = await db.select({ email: customers.email }).from(customers).where(and(eq(customers.tenantId, tenantId), eq(customers.id, customerId)));
   if (cust?.email) return cust.email;
   const [contact] = await db
     .select({ email: customerContacts.email })
     .from(customerContacts)
-    .where(and(eq(customerContacts.customerId, customerId), isNull(customerContacts.archivedAt), sql`${customerContacts.email} is not null`))
+    .where(and(eq(customerContacts.tenantId, tenantId), eq(customerContacts.customerId, customerId), isNull(customerContacts.archivedAt), sql`${customerContacts.email} is not null`))
     .orderBy(desc(customerContacts.isPrimary), asc(customerContacts.id))
     .limit(1);
   return contact?.email ?? null;
 }
 
 /** Send a payment reminder for an open invoice, log it, and stamp lastReminderAt. */
-export async function sendPaymentReminder(invoiceId: number, actor: Actor) {
+export async function sendPaymentReminder(tenantId: number, invoiceId: number, actor: Actor) {
   const [row] = await db
     .select({ inv: invoices, customerName: customers.name, jobNumber: jobs.number, jobTitle: jobs.title })
     .from(invoices)
     .innerJoin(customers, eq(customers.id, invoices.customerId))
     .leftJoin(jobs, eq(jobs.id, invoices.jobId))
-    .where(eq(invoices.id, invoiceId));
+    .where(and(eq(invoices.tenantId, tenantId), eq(invoices.id, invoiceId)));
   if (!row) throw new UserError("Invoice not found.");
   const { inv } = row;
   const balance = balanceOf(inv);
   if (inv.status === "void") throw new UserError("This invoice is void.");
   if (balance <= 0) throw new UserError("This invoice is already paid.");
-  const to = await billingEmail(inv.customerId);
+  const to = await billingEmail(tenantId, inv.customerId);
   if (!to) throw new UserError(`${row.customerName} has no email address on file. Add one to the customer first.`);
 
-  const { company } = await getSettings();
+  const { company } = await getSettings(tenantId);
   const { subject, text } = paymentReminderEmail({
     company,
     customerName: row.customerName,
@@ -91,10 +91,11 @@ export async function sendPaymentReminder(invoiceId: number, actor: Actor) {
     jobNumber: row.jobNumber,
     jobTitle: row.jobTitle,
   });
-  const result = await emailProvider().send({ to, subject, text, replyTo: company.email });
+  const result = await emailProvider().send({ to, subject, text, fromName: company.name, replyTo: company.email || undefined });
 
   await db.transaction(async (tx) => {
     await tx.insert(communications).values({
+      tenantId,
       customerId: inv.customerId,
       jobId: inv.jobId,
       invoiceId: inv.id,
@@ -109,9 +110,10 @@ export async function sendPaymentReminder(invoiceId: number, actor: Actor) {
       sentBy: actor.id,
     });
     if (result.ok) {
-      await tx.update(invoices).set({ lastReminderAt: new Date() }).where(eq(invoices.id, inv.id));
+      await tx.update(invoices).set({ lastReminderAt: new Date() }).where(and(eq(invoices.tenantId, tenantId), eq(invoices.id, inv.id)));
       await logActivity(
         {
+          tenantId,
           action: "invoice.reminder_sent",
           entityType: "invoice",
           entityId: inv.id,

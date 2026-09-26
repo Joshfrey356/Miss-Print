@@ -5,8 +5,10 @@ import { Checkbox, Field, Input, Textarea } from "@/components/ui/input";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { cn } from "@/lib/utils";
 import { respondToProof, type ProofResponseState } from "./actions";
+import { approvalStatement } from "./statement";
 
-export function ProofResponse({ token }: { token: string }) {
+/** `shopName` is the shop that sent the proof: the customer agrees that it produces the job. */
+export function ProofResponse({ token, shopName }: { token: string; shopName: string }) {
   const [mode, setMode] = useState<"approve" | "changes" | null>(null);
   const [state, action] = useActionState<ProofResponseState, FormData>(respondToProof.bind(null, token), undefined);
 
@@ -49,7 +51,7 @@ export function ProofResponse({ token }: { token: string }) {
               <Field label="Comments (optional)">
                 <Textarea name="comment" rows={2} />
               </Field>
-              <Checkbox name="agree" label="I approve this proof as shown. I have checked spelling, phone numbers, colors, sizes and layout, and I understand Miss Print will produce the job exactly as it appears." />
+              <Checkbox name="agree" label={approvalStatement(shopName)} />
             </>
           )}
           {state?.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{state.error}</p>}

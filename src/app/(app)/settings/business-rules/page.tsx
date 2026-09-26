@@ -6,8 +6,8 @@ import { BusinessRulesForm } from "./form";
 export const metadata = { title: "Business Rules" };
 
 export default async function BusinessRulesPage() {
-  await requirePagePermission("settings.manage");
-  const { rules, quoteValidDays } = await getSettings();
+  const user = await requirePagePermission("settings.manage");
+  const { rules, quoteValidDays } = await getSettings(user.tenantId);
   return (
     <SettingsPage
       title="Business Rules"

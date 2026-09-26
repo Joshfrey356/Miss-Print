@@ -12,7 +12,14 @@ export async function markNotificationRead(id: number): Promise<ActionResult> {
     await db
       .update(notifications)
       .set({ readAt: new Date() })
-      .where(and(eq(notifications.id, id), eq(notifications.userId, user.id), isNull(notifications.readAt)));
+      .where(
+        and(
+          eq(notifications.tenantId, user.tenantId),
+          eq(notifications.id, id),
+          eq(notifications.userId, user.id),
+          isNull(notifications.readAt),
+        ),
+      );
     refresh();
   });
 }
@@ -20,7 +27,10 @@ export async function markNotificationRead(id: number): Promise<ActionResult> {
 export async function markAllNotificationsRead(): Promise<ActionResult> {
   return runAction(async () => {
     const user = await requireUser();
-    await db.update(notifications).set({ readAt: new Date() }).where(and(eq(notifications.userId, user.id), isNull(notifications.readAt)));
+    await db
+      .update(notifications)
+      .set({ readAt: new Date() })
+      .where(and(eq(notifications.tenantId, user.tenantId), eq(notifications.userId, user.id), isNull(notifications.readAt)));
     refresh();
   });
 }

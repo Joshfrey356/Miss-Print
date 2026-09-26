@@ -23,25 +23,31 @@ async function parseAssignee(fd: FormData, user: SessionUser) {
   const raw = str(fd, "assignedTo");
   if (!raw || raw === "me") return user.id;
   const id = Number(raw);
-  const [u] = await db.select({ id: users.id }).from(users).where(and(eq(users.id, id), eq(users.active, true)));
+  const [u] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.tenantId, user.tenantId), eq(users.id, id), eq(users.active, true)));
   if (!u) throw new UserError("Pick who this task is for.");
   return u.id;
 }
 
-async function loadJob(jobId: number | null) {
+async function loadJob(tenantId: number, jobId: number | null) {
   if (!jobId) return null;
   const [j] = await db
     .select({ id: jobs.id, number: jobs.number, customerId: jobs.customerId })
     .from(jobs)
-    .where(and(eq(jobs.id, jobId), isNull(jobs.archivedAt)));
+    .where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, jobId), isNull(jobs.archivedAt)));
   if (!j) throw new UserError("That job was not found.");
   return j;
 }
 
 const taskLink = (job: { number: number } | null) => (job ? `/jobs/${job.number}?tab=tasks` : "/tasks");
 
-async function loadTask(id: number) {
-  const [t] = await db.select().from(tasks).where(and(eq(tasks.id, id), isNull(tasks.archivedAt)));
+async function loadTask(tenantId: number, id: number) {
+  const [t] = await db
+    .select()
+    .from(tasks)
+    .where(and(eq(tasks.tenantId, tenantId), eq(tasks.id, id), isNull(tasks.archivedAt)));
   if (!t) throw new UserError("That task was not found. It may have been removed.");
   return t;
 }
@@ -55,26 +61,30 @@ export async function createTask(formData: FormData): Promise<ActionResult<{ id:
     if (title.length > 200) throw new UserError("Keep the task under 200 characters. Add details in the notes.");
     const assignedTo = await parseAssignee(formData, user);
     const dueDate = parseDue(formData);
-    const job = await loadJob(int(formData, "jobId"));
+    const job = await loadJob(user.tenantId, int(formData, "jobId"));
     let customerId = int(formData, "customerId") ?? job?.customerId ?? null;
     if (customerId && !job) {
-      const [c] = await db.select({ id: customers.id }).from(customers).where(eq(customers.id, customerId));
+      const [c] = await db
+        .select({ id: customers.id })
+        .from(customers)
+        .where(and(eq(customers.tenantId, user.tenantId), eq(customers.id, customerId)));
       if (!c) customerId = null;
     }
 
     const id = await db.transaction(async (tx) => {
       const [t] = await tx
         .insert(tasks)
-        .values({ title, notes: str(formData, "notes"), jobId: job?.id ?? null, customerId, assignedTo, dueDate, createdBy: user.id })
+        .values({ tenantId: user.tenantId, title, notes: str(formData, "notes"), jobId: job?.id ?? null, customerId, assignedTo, dueDate, createdBy: user.id })
         .returning({ id: tasks.id });
       if (job)
         await logActivity(
-          { action: "task.created", entityType: "task", entityId: t!.id, jobId: job.id, customerId: job.customerId, actorId: user.id, summary: `Added task “${title}”`, data: { assignedTo, dueDate } },
+          { tenantId: user.tenantId, action: "task.created", entityType: "task", entityId: t!.id, jobId: job.id, customerId: job.customerId, actorId: user.id, summary: `Added task “${title}”`, data: { assignedTo, dueDate } },
           tx,
         );
       if (assignedTo !== user.id)
         await notify(
           {
+            tenantId: user.tenantId,
             userIds: [assignedTo],
             kind: "assigned",
             title: `${user.name.split(" ")[0]} gave you a task${job ? ` on ${jobNo(job.number)}` : ""}`,
@@ -95,16 +105,17 @@ export async function createTask(formData: FormData): Promise<ActionResult<{ id:
 export async function toggleTask(id: number, done: boolean): Promise<ActionResult> {
   return runAction(async () => {
     const user = await requirePermission("tasks.use");
-    const t = await loadTask(id);
+    const t = await loadTask(user.tenantId, id);
     if (Boolean(t.completedAt) === done) return;
     await db.transaction(async (tx) => {
       await tx
         .update(tasks)
         .set(done ? { completedAt: new Date(), completedBy: user.id } : { completedAt: null, completedBy: null })
-        .where(eq(tasks.id, id));
+        .where(and(eq(tasks.tenantId, user.tenantId), eq(tasks.id, id)));
       if (t.jobId)
         await logActivity(
           {
+            tenantId: user.tenantId,
             action: done ? "task.completed" : "task.reopened",
             entityType: "task",
             entityId: id,
@@ -124,7 +135,7 @@ export async function toggleTask(id: number, done: boolean): Promise<ActionResul
 export async function updateTask(formData: FormData): Promise<ActionResult> {
   return runAction(async () => {
     const user = await requirePermission("tasks.use");
-    const t = await loadTask(int(formData, "id") ?? 0);
+    const t = await loadTask(user.tenantId, int(formData, "id") ?? 0);
     const title = str(formData, "title");
     if (!title) throw new UserError("The task needs a title.");
     if (title.length > 200) throw new UserError("Keep the task under 200 characters. Add details in the notes.");
@@ -133,11 +144,15 @@ export async function updateTask(formData: FormData): Promise<ActionResult> {
     const notes = str(formData, "notes");
 
     await db.transaction(async (tx) => {
-      await tx.update(tasks).set({ title, notes, assignedTo, dueDate }).where(eq(tasks.id, t.id));
+      await tx
+        .update(tasks)
+        .set({ title, notes, assignedTo, dueDate })
+        .where(and(eq(tasks.tenantId, user.tenantId), eq(tasks.id, t.id)));
       const reassigned = assignedTo !== t.assignedTo;
       if (t.jobId && (reassigned || dueDate !== t.dueDate))
         await logActivity(
           {
+            tenantId: user.tenantId,
             action: "task.updated",
             entityType: "task",
             entityId: t.id,
@@ -150,9 +165,10 @@ export async function updateTask(formData: FormData): Promise<ActionResult> {
           tx,
         );
       if (reassigned && assignedTo !== user.id) {
-        const [j] = t.jobId ? await tx.select({ number: jobs.number }).from(jobs).where(eq(jobs.id, t.jobId)) : [];
+        const [j] = t.jobId ? await tx.select({ number: jobs.number }).from(jobs).where(and(eq(jobs.tenantId, user.tenantId), eq(jobs.id, t.jobId))) : [];
         await notify(
           {
+            tenantId: user.tenantId,
             userIds: [assignedTo],
             kind: "assigned",
             title: `${user.name.split(" ")[0]} gave you a task${j ? ` on ${jobNo(j.number)}` : ""}`,
@@ -172,14 +188,17 @@ export async function updateTask(formData: FormData): Promise<ActionResult> {
 export async function archiveTask(id: number): Promise<ActionResult> {
   return runAction(async () => {
     const user = await requirePermission("tasks.use");
-    const t = await loadTask(id);
+    const t = await loadTask(user.tenantId, id);
     const allowed = t.createdBy === user.id || t.assignedTo === user.id || user.role === "owner" || user.role === "manager";
     if (!allowed) throw new ForbiddenError("Only the person who made this task (or a manager) can remove it.");
     await db.transaction(async (tx) => {
-      await tx.update(tasks).set({ archivedAt: new Date() }).where(eq(tasks.id, id));
+      await tx
+        .update(tasks)
+        .set({ archivedAt: new Date() })
+        .where(and(eq(tasks.tenantId, user.tenantId), eq(tasks.id, id)));
       if (t.jobId)
         await logActivity(
-          { action: "task.removed", entityType: "task", entityId: id, jobId: t.jobId, customerId: t.customerId, actorId: user.id, summary: `Removed task “${t.title}”` },
+          { tenantId: user.tenantId, action: "task.removed", entityType: "task", entityId: id, jobId: t.jobId, customerId: t.customerId, actorId: user.id, summary: `Removed task “${t.title}”` },
           tx,
         );
     });

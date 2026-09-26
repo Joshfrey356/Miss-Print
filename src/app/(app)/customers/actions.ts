@@ -120,9 +120,9 @@ function parseContact(fd: FormData, prefix = "") {
   return contactSchema.parse({ ...values, name: values.name ?? "" });
 }
 
-async function assertSalesperson(id: number | null) {
+async function assertSalesperson(tenantId: number, id: number | null) {
   if (!id) return;
-  const [u] = await db.select({ role: users.role, active: users.active }).from(users).where(eq(users.id, id));
+  const [u] = await db.select({ role: users.role, active: users.active }).from(users).where(and(eq(users.tenantId, tenantId), eq(users.id, id)));
   if (!u || !u.active || !["owner", "manager", "sales"].includes(u.role)) throw new UserError("Please pick a salesperson from the list.");
 }
 
@@ -136,8 +136,8 @@ export async function checkDuplicates(input: {
   excludeId?: number | null;
 }): Promise<ActionResult<DuplicateMatch[]>> {
   return runAction(async () => {
-    await requirePermission("customers.edit");
-    return findDuplicateCustomers({
+    const user = await requirePermission("customers.edit");
+    return findDuplicateCustomers(user.tenantId, {
       name: input.name?.slice(0, 200),
       phone: input.phone?.slice(0, 40),
       email: input.email?.slice(0, 200),
@@ -156,9 +156,9 @@ export async function saveCustomer(customerId: number | null, fd: FormData): Pro
     const user = await requirePermission("customers.edit");
     const values = parseCustomer(fd);
     const contact = parseContact(fd, "contact");
-    const existing = customerId ? (await db.select().from(customers).where(eq(customers.id, customerId)))[0] : null;
+    const existing = customerId ? (await db.select().from(customers).where(and(eq(customers.tenantId, user.tenantId), eq(customers.id, customerId))))[0] : null;
     if (customerId && !existing) throw new UserError("This customer no longer exists.");
-    if (values.salespersonId !== (existing?.salespersonId ?? null)) await assertSalesperson(values.salespersonId);
+    if (values.salespersonId !== (existing?.salespersonId ?? null)) await assertSalesperson(user.tenantId, values.salespersonId);
 
     // Duplicate check (only when identifying fields are new or changed).
     const identityChanged =
@@ -167,7 +167,7 @@ export async function saveCustomer(customerId: number | null, fd: FormData): Pro
       (existing.phone ?? "") !== (values.phone ?? "") ||
       (existing.email ?? "") !== (values.email ?? "");
     if (identityChanged && str(fd, "confirmDuplicate") !== "1") {
-      const duplicates = await findDuplicateCustomers({ name: values.name, phone: values.phone, email: values.email, excludeId: customerId });
+      const duplicates = await findDuplicateCustomers(user.tenantId, { name: values.name, phone: values.phone, email: values.email, excludeId: customerId });
       if (duplicates.length) return { duplicates };
     }
 
@@ -176,23 +176,23 @@ export async function saveCustomer(customerId: number | null, fd: FormData): Pro
       id = await db.transaction(async (tx) => {
         const [row] = await tx
           .insert(customers)
-          .values({ ...values, customerSince: values.customerSince ?? today() })
+          .values({ ...values, tenantId: user.tenantId, customerSince: values.customerSince ?? today() })
           .returning({ id: customers.id });
-        if (contact) await tx.insert(customerContacts).values({ ...contact, customerId: row.id, isPrimary: true });
+        if (contact) await tx.insert(customerContacts).values({ ...contact, tenantId: user.tenantId, customerId: row.id, isPrimary: true });
         await logActivity(
-          { action: "customer.created", entityType: "customer", entityId: row.id, customerId: row.id, actorId: user.id, summary: `${user.name} added customer ${values.name}` },
+          { tenantId: user.tenantId, action: "customer.created", entityType: "customer", entityId: row.id, customerId: row.id, actorId: user.id, summary: `${user.name} added customer ${values.name}` },
           tx,
         );
         return row.id;
       });
     } else {
       id = existing.id;
-      const primary = await getPrimaryContact(id);
+      const primary = await getPrimaryContact(user.tenantId, id);
       await db.transaction(async (tx) => {
         await tx
           .update(customers)
           .set({ ...values, updatedAt: new Date() })
-          .where(eq(customers.id, id));
+          .where(and(eq(customers.tenantId, user.tenantId), eq(customers.id, id)));
         let contactChange: ReturnType<typeof diff> = null;
         if (contact) {
           if (primary) {
@@ -202,9 +202,9 @@ export async function saveCustomer(customerId: number | null, fd: FormData): Pro
               await tx
                 .update(customerContacts)
                 .set({ ...after, isPrimary: true })
-                .where(eq(customerContacts.id, primary.id));
+                .where(and(eq(customerContacts.tenantId, user.tenantId), eq(customerContacts.id, primary.id)));
           } else {
-            await tx.insert(customerContacts).values({ ...contact, customerId: id, isPrimary: true });
+            await tx.insert(customerContacts).values({ ...contact, tenantId: user.tenantId, customerId: id, isPrimary: true });
             contactChange = { before: {}, after: { primaryContact: contact.name } };
           }
         }
@@ -213,6 +213,7 @@ export async function saveCustomer(customerId: number | null, fd: FormData): Pro
           const fields = [...Object.keys(changes?.after ?? {}), ...(contactChange ? ["primary contact"] : [])];
           await logActivity(
             {
+              tenantId: user.tenantId,
               action: "customer.updated",
               entityType: "customer",
               entityId: id,
@@ -260,10 +261,10 @@ export async function archiveCustomer(id: number): Promise<ActionResult> {
     const [c] = await db
       .update(customers)
       .set({ archivedAt: new Date(), updatedAt: new Date() })
-      .where(and(eq(customers.id, id), isNull(customers.archivedAt)))
+      .where(and(eq(customers.tenantId, user.tenantId), eq(customers.id, id), isNull(customers.archivedAt)))
       .returning({ name: customers.name });
     if (!c) throw new UserError("This customer is already archived.");
-    await logActivity({ action: "customer.archived", entityType: "customer", entityId: id, customerId: id, actorId: user.id, summary: `${user.name} archived ${c.name}` });
+    await logActivity({ tenantId: user.tenantId, action: "customer.archived", entityType: "customer", entityId: id, customerId: id, actorId: user.id, summary: `${user.name} archived ${c.name}` });
     revalidatePath("/customers");
     revalidatePath(`/customers/${id}`);
   }, "Customer archived");
@@ -275,10 +276,10 @@ export async function restoreCustomer(id: number): Promise<ActionResult> {
     const [c] = await db
       .update(customers)
       .set({ archivedAt: null, updatedAt: new Date() })
-      .where(eq(customers.id, id))
+      .where(and(eq(customers.tenantId, user.tenantId), eq(customers.id, id)))
       .returning({ name: customers.name });
     if (!c) throw new UserError("Customer not found.");
-    await logActivity({ action: "customer.restored", entityType: "customer", entityId: id, customerId: id, actorId: user.id, summary: `${user.name} restored ${c.name}` });
+    await logActivity({ tenantId: user.tenantId, action: "customer.restored", entityType: "customer", entityId: id, customerId: id, actorId: user.id, summary: `${user.name} restored ${c.name}` });
     revalidatePath("/customers");
     revalidatePath(`/customers/${id}`);
   }, "Customer restored");
@@ -288,11 +289,12 @@ export async function updateCustomerNotes(id: number, notesRaw: string): Promise
   return runAction(async () => {
     const user = await requirePermission("customers.edit");
     const notes = notesRaw.trim().slice(0, 5000) || null;
-    const [before] = await db.select({ notes: customers.notes, name: customers.name }).from(customers).where(eq(customers.id, id));
+    const [before] = await db.select({ notes: customers.notes, name: customers.name }).from(customers).where(and(eq(customers.tenantId, user.tenantId), eq(customers.id, id)));
     if (!before) throw new UserError("Customer not found.");
     if ((before.notes ?? null) === notes) return;
-    await db.update(customers).set({ notes, updatedAt: new Date() }).where(eq(customers.id, id));
+    await db.update(customers).set({ notes, updatedAt: new Date() }).where(and(eq(customers.tenantId, user.tenantId), eq(customers.id, id)));
     await logActivity({
+      tenantId: user.tenantId,
       action: "customer.updated",
       entityType: "customer",
       entityId: id,
@@ -313,28 +315,28 @@ export async function saveContact(customerId: number, contactId: number | null, 
     const user = await requirePermission("customers.edit");
     const contact = parseContact(fd);
     if (!contact) throw new UserError("Please enter the contact's name.");
-    const [c] = await db.select({ name: customers.name }).from(customers).where(eq(customers.id, customerId));
+    const [c] = await db.select({ name: customers.name }).from(customers).where(and(eq(customers.tenantId, user.tenantId), eq(customers.id, customerId)));
     if (!c) throw new UserError("Customer not found.");
     await db.transaction(async (tx) => {
       if (contact.isPrimary)
-        await tx.update(customerContacts).set({ isPrimary: false }).where(eq(customerContacts.customerId, customerId));
+        await tx.update(customerContacts).set({ isPrimary: false }).where(and(eq(customerContacts.tenantId, user.tenantId), eq(customerContacts.customerId, customerId)));
       if (contactId) {
         const [before] = await tx
           .select()
           .from(customerContacts)
-          .where(and(eq(customerContacts.id, contactId), eq(customerContacts.customerId, customerId)));
+          .where(and(eq(customerContacts.tenantId, user.tenantId), eq(customerContacts.id, contactId), eq(customerContacts.customerId, customerId)));
         if (!before) throw new UserError("Contact not found.");
-        await tx.update(customerContacts).set(contact).where(eq(customerContacts.id, contactId));
+        await tx.update(customerContacts).set(contact).where(and(eq(customerContacts.tenantId, user.tenantId), eq(customerContacts.id, contactId)));
         const changes = diff(before as unknown as Record<string, unknown>, contact);
         if (changes)
           await logActivity(
-            { action: "customer.contact_updated", entityType: "customer", entityId: customerId, customerId, actorId: user.id, summary: `${user.name} updated contact ${contact.name}`, data: changes },
+            { tenantId: user.tenantId, action: "customer.contact_updated", entityType: "customer", entityId: customerId, customerId, actorId: user.id, summary: `${user.name} updated contact ${contact.name}`, data: changes },
             tx,
           );
       } else {
-        await tx.insert(customerContacts).values({ ...contact, customerId });
+        await tx.insert(customerContacts).values({ ...contact, tenantId: user.tenantId, customerId });
         await logActivity(
-          { action: "customer.contact_added", entityType: "customer", entityId: customerId, customerId, actorId: user.id, summary: `${user.name} added contact ${contact.name}` },
+          { tenantId: user.tenantId, action: "customer.contact_added", entityType: "customer", entityId: customerId, customerId, actorId: user.id, summary: `${user.name} added contact ${contact.name}` },
           tx,
         );
       }
@@ -349,10 +351,10 @@ export async function archiveContact(customerId: number, contactId: number): Pro
     const [c] = await db
       .update(customerContacts)
       .set({ archivedAt: new Date(), isPrimary: false })
-      .where(and(eq(customerContacts.id, contactId), eq(customerContacts.customerId, customerId)))
+      .where(and(eq(customerContacts.tenantId, user.tenantId), eq(customerContacts.id, contactId), eq(customerContacts.customerId, customerId)))
       .returning({ name: customerContacts.name });
     if (!c) throw new UserError("Contact not found.");
-    await logActivity({ action: "customer.contact_removed", entityType: "customer", entityId: customerId, customerId, actorId: user.id, summary: `${user.name} removed contact ${c.name}` });
+    await logActivity({ tenantId: user.tenantId, action: "customer.contact_removed", entityType: "customer", entityId: customerId, customerId, actorId: user.id, summary: `${user.name} removed contact ${c.name}` });
     revalidatePath(`/customers/${customerId}`);
   }, "Contact removed");
 }
@@ -376,9 +378,10 @@ export async function logCommunication(customerId: number, fd: FormData): Promis
       subject: str(fd, "subject"),
       body: str(fd, "body") ?? "",
     });
-    const [c] = await db.select({ id: customers.id }).from(customers).where(eq(customers.id, customerId));
+    const [c] = await db.select({ id: customers.id }).from(customers).where(and(eq(customers.tenantId, user.tenantId), eq(customers.id, customerId)));
     if (!c) throw new UserError("Customer not found.");
     await db.insert(communications).values({
+      tenantId: user.tenantId,
       customerId,
       channel: v.channel,
       direction: v.channel === "note" ? "outbound" : v.direction,

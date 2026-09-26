@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { requirePagePermission } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { pricingRules, productCategories, users } from "@/lib/db/schema";
@@ -13,22 +13,22 @@ import { PricingEditor } from "./editor";
 export const metadata = { title: "Edit Pricing" };
 
 export default async function EditPricingPage({ params, searchParams }: { params: Promise<{ categoryId: string }>; searchParams: Promise<{ new?: string }> }) {
-  await requirePagePermission("pricing.edit");
+  const user = await requirePagePermission("pricing.edit");
   const { categoryId } = await params;
   const isNew = (await searchParams).new === "1";
   const id = Number(categoryId);
   if (!Number.isInteger(id) || id <= 0) notFound();
-  const [cat] = await db.select().from(productCategories).where(eq(productCategories.id, id));
+  const [cat] = await db.select().from(productCategories).where(and(eq(productCategories.tenantId, user.tenantId), eq(productCategories.id, id)));
   if (!cat) notFound();
   const [[rule], locs, mats, { rules }] = await Promise.all([
     db
       .select({ config: pricingRules.config, notes: pricingRules.notes, updatedAt: pricingRules.updatedAt, by: users.name })
       .from(pricingRules)
       .leftJoin(users, eq(users.id, pricingRules.updatedBy))
-      .where(eq(pricingRules.categoryId, id)),
-    getLocations(),
-    getMaterials(),
-    getSettings(),
+      .where(and(eq(pricingRules.tenantId, user.tenantId), eq(pricingRules.categoryId, id))),
+    getLocations(user.tenantId),
+    getMaterials(user.tenantId),
+    getSettings(user.tenantId),
   ]);
   const config = (rule?.config as PricingConfig | undefined) ?? { method: cat.pricingMethod };
 

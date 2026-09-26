@@ -2,9 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Ban, History, Mail } from "lucide-react";
-import { requirePagePermission } from "@/lib/auth";
+import { getCurrentUser, requirePagePermission } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { getSettings } from "@/lib/settings";
+import { getBrand } from "@/lib/brand";
+import { Logo } from "@/components/logo";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -20,8 +22,8 @@ import { Num } from "../../_components/parts";
 type Props = { params: Promise<{ id: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const { id } = await params;
-  const d = /^\d+$/.test(id) ? await getInvoiceDetail(Number(id)) : null;
+  const [{ id }, user] = await Promise.all([params, getCurrentUser()]);
+  const d = user && /^\d+$/.test(id) ? await getInvoiceDetail(user.tenantId, Number(id)) : null;
   return { title: d ? invoiceNo(d.inv.number) : "Invoice" };
 }
 
@@ -29,10 +31,10 @@ export default async function InvoicePage({ params }: Props) {
   const user = await requirePagePermission("money.view");
   const { id } = await params;
   if (!/^\d+$/.test(id)) notFound();
-  const d = await getInvoiceDetail(Number(id));
+  const d = await getInvoiceDetail(user.tenantId, Number(id));
   if (!d) notFound();
   const { inv, customer, job } = d;
-  const { company } = await getSettings();
+  const [{ company }, brand] = await Promise.all([getSettings(user.tenantId), getBrand(user.tenantId)]);
   const now = today();
   const balance = balanceOf(inv);
   const overdue = isInvoiceOverdue(inv, now);
@@ -261,8 +263,14 @@ export default async function InvoicePage({ params }: Props) {
       <div className="hidden bg-white text-[13px] leading-snug text-black print:block">
         <div className="flex items-start justify-between border-b-2 border-black pb-4">
           <div>
-            <p className="text-2xl font-bold tracking-tight">{company.name.toUpperCase()}</p>
-            <p className="text-xs font-semibold tracking-[0.2em]">{company.tagline.toUpperCase()}</p>
+            {brand.logoUrl ? (
+              <Logo brand={brand} className="max-h-16" />
+            ) : (
+              <>
+                <p className="text-2xl font-bold tracking-tight">{company.name.toUpperCase()}</p>
+                <p className="text-xs font-semibold tracking-[0.2em]">{company.tagline.toUpperCase()}</p>
+              </>
+            )}
             <p className="mt-2">{company.address}</p>
             <p>
               {company.phone} · {company.email}

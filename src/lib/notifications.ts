@@ -1,5 +1,5 @@
 import "server-only";
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db, type Tx } from "@/lib/db";
 import { notifications, users } from "@/lib/db/schema";
 
@@ -16,6 +16,8 @@ export const NOTIFICATION_KINDS = {
 export type NotificationKind = keyof typeof NOTIFICATION_KINDS;
 
 type NotifyInput = {
+  /** The shop this happened in. Only people in that shop are notified. */
+  tenantId: number;
   userIds: (number | null | undefined)[];
   kind: NotificationKind;
   title: string;
@@ -33,10 +35,11 @@ export async function notify(input: NotifyInput, tx: Tx | typeof db = db) {
   const recipients = await tx
     .select({ id: users.id, prefs: users.notificationPrefs, active: users.active })
     .from(users)
-    .where(inArray(users.id, ids));
+    .where(and(eq(users.tenantId, input.tenantId), inArray(users.id, ids)));
   const rows = recipients
     .filter((u) => u.active && u.prefs?.[input.kind] !== false)
     .map((u) => ({
+      tenantId: input.tenantId,
       userId: u.id,
       kind: input.kind,
       title: input.title,

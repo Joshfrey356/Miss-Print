@@ -9,8 +9,12 @@ export function SetupForm() {
   return (
     <form action={action} className="space-y-4">
       <div>
+        <Label htmlFor="shopName">Shop name</Label>
+        <Input id="shopName" name="shopName" autoComplete="organization" required autoFocus className="h-12 text-base" />
+      </div>
+      <div>
         <Label htmlFor="name">Your name</Label>
-        <Input id="name" name="name" autoComplete="name" required autoFocus className="h-12 text-base" />
+        <Input id="name" name="name" autoComplete="name" required className="h-12 text-base" />
       </div>
       <div>
         <Label htmlFor="email">Email</Label>

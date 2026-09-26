@@ -36,8 +36,9 @@ export default async function TeamPage() {
       })
       .from(users)
       .leftJoin(locations, eq(locations.id, users.locationId))
+      .where(eq(users.tenantId, me.tenantId))
       .orderBy(desc(users.active), asc(users.name)),
-    getLocations(),
+    getLocations(me.tenantId),
   ]);
   const locOptions = locs.map((l) => ({ id: l.id, name: l.name }));
   const matrix = roleMatrix();

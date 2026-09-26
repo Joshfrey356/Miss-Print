@@ -19,7 +19,10 @@ export async function saveMyProfile(_prev: Prev, fd: FormData): Promise<ActionRe
     const data = z
       .object({ name: z.string().min(2, "Enter your name.").max(80), phone: z.string().max(40).nullable() })
       .parse({ name: str(fd, "name") ?? "", phone: str(fd, "phone") });
-    await db.update(users).set(data).where(eq(users.id, user.id));
+    await db
+      .update(users)
+      .set(data)
+      .where(and(eq(users.tenantId, user.tenantId), eq(users.id, user.id)));
     revalidatePath("/", "layout");
   }, "Profile saved");
 }
@@ -33,16 +36,22 @@ export async function changeMyPassword(_prev: Prev, fd: FormData): Promise<Actio
     if (!current) throw new UserError("Enter your current password.");
     if (next.length < 10) throw new UserError("Your new password must be at least 10 characters.");
     if (next !== confirm) throw new UserError("The two new passwords don't match.");
-    const [row] = await db.select({ hash: users.passwordHash }).from(users).where(eq(users.id, user.id));
+    const [row] = await db
+      .select({ hash: users.passwordHash })
+      .from(users)
+      .where(and(eq(users.tenantId, user.tenantId), eq(users.id, user.id)));
     if (!row || !(await verifyPassword(current, row.hash))) throw new UserError("Your current password isn't right.");
     const hash = await hashPassword(next);
     // Keep this browser signed in; sign out everywhere else.
     const token = (await cookies()).get(SESSION_COOKIE)?.value ?? "";
     const thisSession = createHash("sha256").update(token).digest("hex");
     await db.transaction(async (tx) => {
-      await tx.update(users).set({ passwordHash: hash }).where(eq(users.id, user.id));
+      await tx
+        .update(users)
+        .set({ passwordHash: hash })
+        .where(and(eq(users.tenantId, user.tenantId), eq(users.id, user.id)));
       await tx.delete(sessions).where(and(eq(sessions.userId, user.id), ne(sessions.id, thisSession)));
-      await logActivity({ action: "user.password_changed", entityType: "user", entityId: user.id, actorId: user.id, summary: `${user.name} changed their password` }, tx);
+      await logActivity({ tenantId: user.tenantId, action: "user.password_changed", entityType: "user", entityId: user.id, actorId: user.id, summary: `${user.name} changed their password` }, tx);
     });
   }, "Password changed. You're still signed in here; other devices were signed out.");
 }
@@ -51,7 +60,10 @@ export async function saveMyNotifications(_prev: Prev, fd: FormData): Promise<Ac
   return runAction(async () => {
     const user = await requireUser();
     const prefs = Object.fromEntries(Object.keys(NOTIFICATION_KINDS).map((k) => [k, fd.get(k) === "on"]));
-    await db.update(users).set({ notificationPrefs: prefs }).where(eq(users.id, user.id));
+    await db
+      .update(users)
+      .set({ notificationPrefs: prefs })
+      .where(and(eq(users.tenantId, user.tenantId), eq(users.id, user.id)));
     revalidatePath("/settings/profile");
   }, "Notification settings saved");
 }

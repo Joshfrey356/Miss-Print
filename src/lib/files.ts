@@ -1,7 +1,7 @@
 import "server-only";
 import { and, eq, inArray, isNull, max } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { files, jobs, proofs, type FileFolder } from "@/lib/db/schema";
+import { customers, files, jobs, proofs, quotes, type FileFolder } from "@/lib/db/schema";
 import { basicPreflight, MAX_UPLOAD_BYTES, newStorageKey, storage } from "@/lib/storage";
 import { logActivity } from "@/lib/activity";
 import { notify } from "@/lib/notifications";
@@ -24,20 +24,35 @@ export async function saveUpload(
   if (file.size > MAX_UPLOAD_BYTES) throw new Error(`${file.name} is larger than 50 MB.`);
   if (BLOCKED_EXT.test(file.name)) throw new Error(`${file.name}: this file type isn't allowed.`);
   const filename = file.name.replace(/[\\/\u0000-\u001f]/g, "_").slice(0, 200) || "file";
-  const key = newStorageKey(filename);
+  const tenantId = user.tenantId;
+
+  // Ids come from the client: they must belong to the uploader's shop.
+  let job: typeof jobs.$inferSelect | undefined;
+  if (opts.jobId) {
+    [job] = await db.select().from(jobs).where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, opts.jobId)));
+    if (!job) throw new Error("Job not found.");
+  }
+  if (opts.customerId) {
+    const [c] = await db.select({ id: customers.id }).from(customers).where(and(eq(customers.tenantId, tenantId), eq(customers.id, opts.customerId)));
+    if (!c) throw new Error("Customer not found.");
+  }
+  if (opts.quoteId) {
+    const [q] = await db.select({ id: quotes.id }).from(quotes).where(and(eq(quotes.tenantId, tenantId), eq(quotes.id, opts.quoteId)));
+    if (!q) throw new Error("Quote not found.");
+  }
+
+  const key = newStorageKey(tenantId, filename);
   const buf = Buffer.from(await file.arrayBuffer());
   const mime = file.type || "application/octet-stream";
   await storage().put(key, buf, mime);
   const pf = basicPreflight(filename, mime, file.size);
 
-  let job: typeof jobs.$inferSelect | undefined;
-  if (opts.jobId) [job] = await db.select().from(jobs).where(eq(jobs.id, opts.jobId));
-
   return db.transaction(async (tx) => {
     const [row] = await tx
       .insert(files)
       .values({
-        jobId: opts.jobId ?? null,
+        tenantId,
+        jobId: job?.id ?? null,
         customerId: opts.customerId ?? job?.customerId ?? null,
         quoteId: opts.quoteId ?? null,
         folder: opts.folder,
@@ -52,26 +67,26 @@ export async function saveUpload(
       .returning();
 
     if (job) {
-      const actor = { id: user.id, name: user.name };
+      const actor = { id: user.id, name: user.name, tenantId };
       if (opts.folder === "proof") {
         // Never overwrite proofs: each upload is a new version.
-        const [{ v }] = await tx.select({ v: max(proofs.version) }).from(proofs).where(eq(proofs.jobId, job.id));
+        const [{ v }] = await tx.select({ v: max(proofs.version) }).from(proofs).where(and(eq(proofs.tenantId, tenantId), eq(proofs.jobId, job.id)));
         const version = (v ?? 0) + 1;
         // Older unapproved versions are replaced (their links show "a newer proof is available").
-        await tx.update(proofs).set({ status: "superseded" }).where(and(eq(proofs.jobId, job.id), inArray(proofs.status, ["draft", "sent", "changes_requested"])));
-        await tx.insert(proofs).values({ jobId: job.id, version, fileId: row!.id, status: "draft", note: opts.note ?? null, createdBy: user.id });
-        await tx.update(files).set({ filename: `Proof V${version} — ${filename}` }).where(eq(files.id, row!.id));
-        await logActivity({ action: "proof.uploaded", entityType: "proof", jobId: job.id, customerId: job.customerId, actorId: user.id, summary: `Uploaded Proof V${version}` }, tx);
+        await tx.update(proofs).set({ status: "superseded" }).where(and(eq(proofs.tenantId, tenantId), eq(proofs.jobId, job.id), inArray(proofs.status, ["draft", "sent", "changes_requested"])));
+        await tx.insert(proofs).values({ tenantId, jobId: job.id, version, fileId: row!.id, status: "draft", note: opts.note ?? null, createdBy: user.id });
+        await tx.update(files).set({ filename: `Proof V${version} — ${filename}` }).where(and(eq(files.tenantId, tenantId), eq(files.id, row!.id)));
+        await logActivity({ tenantId, action: "proof.uploaded", entityType: "proof", jobId: job.id, customerId: job.customerId, actorId: user.id, summary: `Uploaded Proof V${version}` }, tx);
         if (["approved", "waiting_artwork", "design", "waiting_approval", "proof_ready"].includes(job.status))
           await changeJobStatus(tx, job, "proof_ready", actor, { reason: `Proof V${version} uploaded` });
       } else {
-        await logActivity({ action: "file.uploaded", entityType: "file", entityId: row!.id, jobId: job.id, customerId: job.customerId, actorId: user.id, summary: `Uploaded ${filename} to ${FOLDER_LABELS[opts.folder]}` }, tx);
+        await logActivity({ tenantId, action: "file.uploaded", entityType: "file", entityId: row!.id, jobId: job.id, customerId: job.customerId, actorId: user.id, summary: `Uploaded ${filename} to ${FOLDER_LABELS[opts.folder]}` }, tx);
         if (opts.folder === "original_artwork" || opts.folder === "customer") {
           if (job.status === "waiting_artwork") {
             const next = nextStatus(job);
             if (next) await changeJobStatus(tx, job, next, actor, { reason: "Artwork received" });
           }
-          await notify({ userIds: [job.designerId, job.salespersonId], kind: "artwork", title: `Artwork uploaded to ${jobNo(job.number)}`, body: filename, link: `/jobs/${job.number}?tab=files`, actorId: user.id }, tx);
+          await notify({ tenantId, userIds: [job.designerId, job.salespersonId], kind: "artwork", title: `Artwork uploaded to ${jobNo(job.number)}`, body: filename, link: `/jobs/${job.number}?tab=files`, actorId: user.id }, tx);
         }
       }
     }
@@ -79,7 +94,7 @@ export async function saveUpload(
   });
 }
 
-export async function getFileRow(id: number) {
-  const [row] = await db.select().from(files).where(and(eq(files.id, id), isNull(files.archivedAt)));
+export async function getFileRow(tenantId: number, id: number) {
+  const [row] = await db.select().from(files).where(and(eq(files.tenantId, tenantId), eq(files.id, id), isNull(files.archivedAt)));
   return row;
 }

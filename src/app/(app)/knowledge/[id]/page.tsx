@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { Pencil } from "lucide-react";
-import { requireUser } from "@/lib/auth";
+import { getCurrentUser, requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { knowledgeArticles, users } from "@/lib/db/schema";
 import { canEditKnowledge } from "@/lib/admin/knowledge";
@@ -15,8 +15,12 @@ import { ArchiveButton } from "./archive-button";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const id = Number((await params).id);
-  if (!Number.isInteger(id) || id <= 0) return { title: "Knowledge" };
-  const [a] = await db.select({ title: knowledgeArticles.title }).from(knowledgeArticles).where(eq(knowledgeArticles.id, id));
+  const user = await getCurrentUser();
+  if (!user || !Number.isInteger(id) || id <= 0) return { title: "Knowledge" };
+  const [a] = await db
+    .select({ title: knowledgeArticles.title })
+    .from(knowledgeArticles)
+    .where(and(eq(knowledgeArticles.tenantId, user.tenantId), eq(knowledgeArticles.id, id)));
   return { title: a?.title ?? "Knowledge" };
 }
 
@@ -37,7 +41,7 @@ export default async function ArticlePage({ params }: { params: Promise<{ id: st
     })
     .from(knowledgeArticles)
     .leftJoin(users, eq(users.id, knowledgeArticles.updatedBy))
-    .where(eq(knowledgeArticles.id, id));
+    .where(and(eq(knowledgeArticles.tenantId, user.tenantId), eq(knowledgeArticles.id, id)));
   if (!a || (a.archivedAt && !editor)) notFound();
 
   return (

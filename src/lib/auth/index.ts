@@ -4,16 +4,33 @@ import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import bcrypt from "bcryptjs";
-import { and, eq, gt, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import { db, isPreviewMode } from "@/lib/db";
-import { loginAttempts, sessions, users, type User } from "@/lib/db/schema";
+import { loginAttempts, sessions, tenants, users, type User } from "@/lib/db/schema";
 import { can, type Permission } from "@/lib/permissions";
+import { SHOP_COOKIE } from "@/lib/tenant";
 
 export const SESSION_COOKIE = "mp_session";
 const SESSION_DAYS = 30;
 const DAY = 24 * 60 * 60 * 1000;
 
-export type SessionUser = Pick<User, "id" | "name" | "handle" | "email" | "role" | "color" | "locationId" | "title">;
+/** The signed-in person. `tenantId` is their shop: scope every query with it. */
+export type SessionUser = Pick<User, "id" | "tenantId" | "name" | "handle" | "email" | "role" | "color" | "locationId" | "title">;
+
+/** Columns for SessionUser, plus what's needed to decide whether the session is still valid. */
+const sessionUserColumns = {
+  id: users.id,
+  tenantId: users.tenantId,
+  name: users.name,
+  handle: users.handle,
+  email: users.email,
+  role: users.role,
+  color: users.color,
+  locationId: users.locationId,
+  title: users.title,
+  active: users.active,
+  tenantArchivedAt: tenants.archivedAt,
+};
 
 export const hashPassword = (password: string) => bcrypt.hash(password, 12);
 export const verifyPassword = (password: string, hash: string) => bcrypt.compare(password, hash);
@@ -21,7 +38,7 @@ export const verifyPassword = (password: string, hash: string) => bcrypt.compare
 const DUMMY_HASH = "$2b$12$tzWQrcbWfkT7HymssBcn0u5iyXa.fhLGaXBAlGaEazo3yTCt.7c9C";
 const hashToken = (token: string) => createHash("sha256").update(token).digest("hex");
 
-async function clientIp() {
+export async function clientIp() {
   const h = await headers();
   return h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || "unknown";
 }
@@ -56,14 +73,15 @@ export async function signIn(
     return { ok: false, error: "Too many attempts. Please wait 15 minutes and try again." };
   }
   const [user] = await db
-    .select()
+    .select({ id: users.id, passwordHash: users.passwordHash, active: users.active, tenantArchivedAt: tenants.archivedAt, shop: tenants.slug })
     .from(users)
+    .innerJoin(tenants, eq(tenants.id, users.tenantId))
     .where(sql`lower(${users.email}) = ${email}`)
     .limit(1);
   // Always run bcrypt so response time doesn't reveal whether the email exists.
   // DUMMY_HASH must be a well-formed 60-char bcrypt hash, or bcrypt returns instantly.
   const valid = await verifyPassword(password, user?.passwordHash ?? DUMMY_HASH);
-  const success = Boolean(user && user.active && valid);
+  const success = Boolean(user && user.active && !user.tenantArchivedAt && valid);
   await db.insert(loginAttempts).values([
     { key: "email:" + email, success },
     { key: "ip:" + ip, success },
@@ -71,7 +89,13 @@ export async function signIn(
   if (!user || !success) return { ok: false, error: "That email and password don't match." };
 
   await startSession(user.id, ip);
+  await rememberShop(user.shop);
   return { ok: true };
+}
+
+/** Remember this device's shop so the sign-in page shows its name and logo next time. */
+async function rememberShop(slug: string) {
+  (await cookies()).set(SHOP_COOKIE, slug, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", maxAge: 365 * 24 * 60 * 60 });
 }
 
 // ---------------------------------------------------------------------------
@@ -116,6 +140,7 @@ async function startSession(userId: number, ip: string) {
     ip,
     userAgent: h.get("user-agent")?.slice(0, 300) ?? null,
   });
+  // tenant-scope: the signing-in user's own row.
   await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, userId));
   (await cookies()).set(SESSION_COOKIE, token, {
     httpOnly: true,
@@ -133,9 +158,15 @@ async function startSession(userId: number, ip: string) {
  */
 export async function previewSignIn(email: string): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!isPreviewMode()) return { ok: false, error: "Preview sign-in is only available in preview mode." };
-  const [user] = await db.select().from(users).where(sql`lower(${users.email}) = ${email.toLowerCase()}`).limit(1);
+  const [user] = await db
+    .select({ id: users.id, active: users.active, shop: tenants.slug })
+    .from(users)
+    .innerJoin(tenants, eq(tenants.id, users.tenantId))
+    .where(sql`lower(${users.email}) = ${email.toLowerCase()}`)
+    .limit(1);
   if (!user || !user.active) return { ok: false, error: "Demo user not found." };
   await startSession(user.id, await clientIp());
+  await rememberShop(user.shop);
   return { ok: true };
 }
 
@@ -154,30 +185,17 @@ export const getCurrentUser = cache(async (): Promise<SessionUser | null> => {
     // Preview cookies are only honored on the built-in demo database, never on real data.
     const userId = isPreviewMode() ? readPreviewToken(token) : null;
     if (!userId) return null;
-    const [u] = await db
-      .select({ id: users.id, name: users.name, handle: users.handle, email: users.email, role: users.role, color: users.color, locationId: users.locationId, title: users.title, active: users.active })
-      .from(users)
-      .where(eq(users.id, userId));
-    if (!u || !u.active) return null;
-    const { active: _a, ...user } = u;
+    const [u] = await db.select(sessionUserColumns).from(users).innerJoin(tenants, eq(tenants.id, users.tenantId)).where(eq(users.id, userId));
+    if (!u || !u.active || u.tenantArchivedAt) return null;
+    const { active: _a, tenantArchivedAt: _t, ...user } = u;
     return user;
   }
   const id = hashToken(token);
   const [row] = await db
-    .select({
-      id: users.id,
-      name: users.name,
-      handle: users.handle,
-      email: users.email,
-      role: users.role,
-      color: users.color,
-      locationId: users.locationId,
-      title: users.title,
-      active: users.active,
-      expiresAt: sessions.expiresAt,
-    })
+    .select({ ...sessionUserColumns, expiresAt: sessions.expiresAt })
     .from(sessions)
     .innerJoin(users, eq(users.id, sessions.userId))
+    .innerJoin(tenants, and(eq(tenants.id, users.tenantId), isNull(tenants.archivedAt)))
     .where(eq(sessions.id, id))
     .limit(1);
   if (!row || !row.active || row.expiresAt.getTime() < Date.now()) return null;
@@ -188,7 +206,7 @@ export const getCurrentUser = cache(async (): Promise<SessionUser | null> => {
       .set({ expiresAt: new Date(Date.now() + SESSION_DAYS * DAY) })
       .where(eq(sessions.id, id));
   }
-  const { active: _a, expiresAt: _e, ...user } = row;
+  const { active: _a, expiresAt: _e, tenantArchivedAt: _t, ...user } = row;
   return user;
 });
 

@@ -11,7 +11,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   const { id } = await ctx.params;
-  const row = await getFileRow(Number(id));
+  const row = await getFileRow(user.tenantId, Number(id));
   if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const ok =
     row.folder === "receipt" ? can(user.role, "expenses.edit") || can(user.role, "money.view") :

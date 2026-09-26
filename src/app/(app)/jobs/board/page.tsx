@@ -2,7 +2,7 @@ import { Tv } from "lucide-react";
 import { requirePagePermission } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { boardJobs } from "@/lib/jobs/queries";
-import { getActiveUsers } from "@/lib/lookups";
+import { getActiveUsers, getLocations } from "@/lib/lookups";
 import { PageHeader } from "@/components/ui/page-header";
 import { LinkButton } from "@/components/ui/button";
 import { ViewToggle } from "@/components/jobs/view-toggle";
@@ -12,7 +12,7 @@ export const metadata = { title: "Production Board" };
 
 export default async function BoardPage() {
   const user = await requirePagePermission("jobs.view");
-  const [jobs, people] = await Promise.all([boardJobs(user), getActiveUsers()]);
+  const [jobs, people, locations] = await Promise.all([boardJobs(user), getActiveUsers(user.tenantId), getLocations(user.tenantId)]);
   return (
     <>
       <PageHeader
@@ -27,7 +27,7 @@ export default async function BoardPage() {
           </>
         }
       />
-      <ProductionBoard jobs={jobs} people={people.map((p) => ({ id: p.id, name: p.name }))} canMove={can(user.role, "jobs.status")} />
+      <ProductionBoard jobs={jobs} people={people.map((p) => ({ id: p.id, name: p.name }))} locations={locations.map((l) => ({ code: l.code, name: l.name }))} canMove={can(user.role, "jobs.status")} />
     </>
   );
 }

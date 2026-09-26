@@ -3,6 +3,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { dueLabel, jobNo } from "@/lib/format";
 import { STATUS_SHORT } from "@/lib/jobs/workflow";
 import { cn } from "@/lib/utils";
+import { locationTone } from "./job-meta";
 import type { JobStatus, Priority } from "@/lib/db/schema";
 
 export type BoardCard = {
@@ -18,6 +19,8 @@ export type BoardCard = {
   ownerColor: string | null;
   locationCode: string | null;
   locationName: string | null;
+  /** Position of the job's location in the shop's sorted location list; picks its color. */
+  locationIndex: number | null;
   itemSummary: string | null;
   hasArtwork: boolean;
 };
@@ -57,7 +60,7 @@ export function JobCardView({ job, dragging, tv }: { job: BoardCard; dragging?: 
         </span>
         <span className="flex items-center gap-1.5">
           {job.locationCode && (
-            <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide", job.locationCode === "HAMMOND" ? "bg-teal-50 text-teal-700" : job.locationCode === "OFFSITE" ? "bg-violet-50 text-violet-700" : "bg-brand-50 text-brand-700")}>
+            <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide", locationTone(job.locationIndex).chip)}>
               {job.locationName}
             </span>
           )}

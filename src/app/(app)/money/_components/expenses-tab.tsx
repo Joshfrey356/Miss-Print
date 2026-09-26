@@ -12,8 +12,8 @@ import { listExpenses, PAGE_SIZE } from "@/lib/money/queries";
 import { EXPENSE_CATEGORIES, EXPENSE_CATEGORY_LABELS, expensePaymentLabel } from "@/lib/money/labels";
 import { filterInput, FilterLabel, KeepParams, Num, type SP } from "./parts";
 
-export async function ExpensesTab({ params, canEdit }: { params: SP; canEdit: boolean }) {
-  const data = await listExpenses(params, { categories: EXPENSE_CATEGORIES });
+export async function ExpensesTab({ tenantId, params, canEdit }: { tenantId: number; params: SP; canEdit: boolean }) {
+  const data = await listExpenses(tenantId, params, { categories: EXPENSE_CATEGORIES });
   const p = { ...params, tab: "expenses" };
   const filtered = !!(params.category || params.month || params.attributed || params.q);
 

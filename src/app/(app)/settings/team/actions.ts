@@ -5,7 +5,7 @@ import { z } from "zod";
 import { hashPassword, requirePermission } from "@/lib/auth";
 import { runAction, str, UserError, type ActionResult } from "@/lib/actions";
 import { db } from "@/lib/db";
-import { roleEnum, sessions, users } from "@/lib/db/schema";
+import { locations, roleEnum, sessions, users } from "@/lib/db/schema";
 import { diff, logActivity } from "@/lib/activity";
 import { ROLE_LABELS } from "@/lib/permissions";
 
@@ -39,12 +39,30 @@ function readUser(fd: FormData) {
   });
 }
 
-async function assertUnique(email: string, handle: string, exceptId?: number) {
+/**
+ * Emails are unique across ALL shops (the email decides which shop a person signs in to);
+ * @mention names only need to be unique within this shop.
+ */
+async function assertUnique(tenantId: number, email: string, handle: string, exceptId?: number) {
   const notMe = exceptId ? ne(users.id, exceptId) : undefined;
+  // tenant-scope: sign-in emails are globally unique, so this check deliberately spans every shop.
   const [e] = await db.select({ n: count() }).from(users).where(and(sql`lower(${users.email}) = ${email}`, notMe));
   if (e!.n > 0) throw new UserError("Someone already uses that email address.");
-  const [h] = await db.select({ n: count() }).from(users).where(and(eq(users.handle, handle), notMe));
+  const [h] = await db
+    .select({ n: count() })
+    .from(users)
+    .where(and(eq(users.tenantId, tenantId), eq(users.handle, handle), notMe));
   if (h!.n > 0) throw new UserError(`@${handle} is already taken. Try another @mention name.`);
+}
+
+/** The home location must be one of this shop's locations. */
+async function assertLocation(tenantId: number, locationId: number | null) {
+  if (!locationId) return;
+  const [l] = await db
+    .select({ id: locations.id })
+    .from(locations)
+    .where(and(eq(locations.tenantId, tenantId), eq(locations.id, locationId)));
+  if (!l) throw new UserError("Choose a location from the list.");
 }
 
 function readPassword(fd: FormData) {
@@ -59,16 +77,18 @@ export async function createUser(_prev: Prev, fd: FormData): Promise<ActionResul
     const me = await requirePermission("users.manage");
     const data = readUser(fd);
     const password = readPassword(fd);
-    await assertUnique(data.email, data.handle);
-    const [{ n }] = await db.select({ n: count() }).from(users);
+    await assertUnique(me.tenantId, data.email, data.handle);
+    await assertLocation(me.tenantId, data.locationId);
+    const [{ n }] = await db.select({ n: count() }).from(users).where(eq(users.tenantId, me.tenantId));
     const passwordHash = await hashPassword(password);
     await db.transaction(async (tx) => {
       const [u] = await tx
         .insert(users)
-        .values({ ...data, passwordHash, color: COLORS[n % COLORS.length]! })
+        .values({ ...data, tenantId: me.tenantId, passwordHash, color: COLORS[n % COLORS.length]! })
         .returning({ id: users.id });
       await logActivity(
         {
+          tenantId: me.tenantId,
           action: "user.created",
           entityType: "user",
           entityId: u!.id,
@@ -88,15 +108,22 @@ export async function updateUser(_prev: Prev, fd: FormData): Promise<ActionResul
     const me = await requirePermission("users.manage");
     const id = Number(fd.get("id"));
     const data = readUser(fd);
-    const [before] = await db.select().from(users).where(eq(users.id, id));
+    const [before] = await db
+      .select()
+      .from(users)
+      .where(and(eq(users.tenantId, me.tenantId), eq(users.id, id)));
     if (!before) throw new UserError("That person no longer exists.");
     if (id === me.id && data.role !== before.role) throw new UserError("You can't change your own role. Ask another owner to do it.");
-    await assertUnique(data.email, data.handle, id);
+    await assertUnique(me.tenantId, data.email, data.handle, id);
+    await assertLocation(me.tenantId, data.locationId);
     const changes = diff(before, data);
     if (!changes) return;
     await db.transaction(async (tx) => {
-      await tx.update(users).set(data).where(eq(users.id, id));
-      await logActivity({ action: "user.updated", entityType: "user", entityId: id, actorId: me.id, summary: `Updated ${data.name}`, data: changes }, tx);
+      await tx
+        .update(users)
+        .set(data)
+        .where(and(eq(users.tenantId, me.tenantId), eq(users.id, id)));
+      await logActivity({ tenantId: me.tenantId, action: "user.updated", entityType: "user", entityId: id, actorId: me.id, summary: `Updated ${data.name}`, data: changes }, tx);
     });
     revalidatePath("/settings/team");
   }, "Saved");
@@ -107,13 +134,20 @@ export async function resetUserPassword(_prev: Prev, fd: FormData): Promise<Acti
     const me = await requirePermission("users.manage");
     const id = Number(fd.get("id"));
     const password = readPassword(fd);
-    const [u] = await db.select({ name: users.name }).from(users).where(eq(users.id, id));
+    const [u] = await db
+      .select({ name: users.name })
+      .from(users)
+      .where(and(eq(users.tenantId, me.tenantId), eq(users.id, id)));
     if (!u) throw new UserError("That person no longer exists.");
     const passwordHash = await hashPassword(password);
     await db.transaction(async (tx) => {
-      await tx.update(users).set({ passwordHash }).where(eq(users.id, id));
+      await tx
+        .update(users)
+        .set({ passwordHash })
+        .where(and(eq(users.tenantId, me.tenantId), eq(users.id, id)));
+      // sessions has no tenant column; the user id was checked against this shop above.
       if (id !== me.id) await tx.delete(sessions).where(eq(sessions.userId, id));
-      await logActivity({ action: "user.password_reset", entityType: "user", entityId: id, actorId: me.id, summary: `Reset the password for ${u.name}` }, tx);
+      await logActivity({ tenantId: me.tenantId, action: "user.password_reset", entityType: "user", entityId: id, actorId: me.id, summary: `Reset the password for ${u.name}` }, tx);
     });
   }, "Password reset. Give them the new password; they'll need to sign in again.");
 }
@@ -122,14 +156,21 @@ export async function setUserActive(id: number, active: boolean): Promise<Action
   return runAction(async () => {
     const me = await requirePermission("users.manage");
     if (id === me.id && !active) throw new UserError("You can't deactivate yourself.");
-    const [u] = await db.select({ name: users.name, active: users.active }).from(users).where(eq(users.id, id));
+    const [u] = await db
+      .select({ name: users.name, active: users.active })
+      .from(users)
+      .where(and(eq(users.tenantId, me.tenantId), eq(users.id, id)));
     if (!u) throw new UserError("That person no longer exists.");
     if (u.active === active) return;
     await db.transaction(async (tx) => {
-      await tx.update(users).set({ active }).where(eq(users.id, id));
+      await tx
+        .update(users)
+        .set({ active })
+        .where(and(eq(users.tenantId, me.tenantId), eq(users.id, id)));
       if (!active) await tx.delete(sessions).where(eq(sessions.userId, id));
       await logActivity(
         {
+          tenantId: me.tenantId,
           action: active ? "user.reactivated" : "user.deactivated",
           entityType: "user",
           entityId: id,

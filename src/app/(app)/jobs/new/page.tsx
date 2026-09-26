@@ -10,7 +10,7 @@ export const metadata = { title: "New Job" };
 export default async function NewJobPage({ searchParams }: { searchParams: Promise<{ customerId?: string }> }) {
   const user = await requirePagePermission("jobs.create");
   const { customerId } = await searchParams;
-  const [cats, people, locations, customer] = await Promise.all([getCategories(), getActiveUsers(), getLocations(), customerId ? pickedCustomer(Number(customerId)) : Promise.resolve(null)]);
+  const [cats, people, locations, customer] = await Promise.all([getCategories(user.tenantId), getActiveUsers(user.tenantId), getLocations(user.tenantId), customerId ? pickedCustomer(user.tenantId, Number(customerId)) : Promise.resolve(null)]);
   return (
     <>
       <PageHeader title="New job" back={{ href: "/jobs", label: "Jobs" }} subtitle="For work that's already priced and approved — like a walk-in or a repeat order." />

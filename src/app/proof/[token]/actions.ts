@@ -5,16 +5,15 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { communications, jobs, proofs } from "@/lib/db/schema";
-import { proofByToken } from "@/lib/proofs";
+import { proofByToken, proofLinkTenant } from "@/lib/proofs";
 import { logActivity } from "@/lib/activity";
 import { notify } from "@/lib/notifications";
 import { changeJobStatus } from "@/lib/jobs/service";
 import { jobNo } from "@/lib/format";
+import { getSettings } from "@/lib/settings";
+import { approvalStatement, shopName } from "./statement";
 
 export type ProofResponseState = { ok?: boolean; error?: string } | undefined;
-
-const APPROVAL_STATEMENT =
-  "I approve this proof as shown. I have checked spelling, phone numbers, colors, sizes and layout, and I understand Miss Print will produce the job exactly as it appears.";
 
 const Base = z.object({
   name: z.string().trim().min(2, "Please enter your name.").max(120),
@@ -32,8 +31,16 @@ export async function respondToProof(token: string, _prev: ProofResponseState, f
   if (decision !== "approve" && decision !== "changes") return { error: "Choose approve or request changes." };
 
   const row = await proofByToken(token);
-  if (!row) return { error: "This link has expired. Please contact Miss Print." };
+  if (!row) {
+    const linkTenant = await proofLinkTenant(token);
+    const name = linkTenant ? (await getSettings(linkTenant)).company.name : null;
+    return { error: `This link has expired. Please contact ${shopName(name)}.` };
+  }
   if (row.proof.status !== "sent") return { error: "This proof has already been answered or replaced." };
+  // The link decides the shop; everything below stays inside it.
+  const tenantId = row.proof.tenantId;
+  const { company } = await getSettings(tenantId);
+  const statement = approvalStatement(shopName(company.name));
 
   const h = await headers();
   const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? h.get("x-real-ip") ?? null;
@@ -53,12 +60,13 @@ export async function respondToProof(token: string, _prev: ProofResponseState, f
         responderIp: ip,
         responderUserAgent: ua,
         customerComment: comment || null,
-        approvalStatement: approved ? APPROVAL_STATEMENT : null,
+        approvalStatement: approved ? statement : null,
       })
-      .where(and(eq(proofs.id, row.proof.id), eq(proofs.status, "sent")))
+      .where(and(eq(proofs.tenantId, tenantId), eq(proofs.id, row.proof.id), eq(proofs.status, "sent")))
       .returning({ id: proofs.id });
     if (!updated) return false;
     await tx.insert(communications).values({
+      tenantId,
       customerId: row.job.customerId,
       jobId: row.job.id,
       channel: "email",
@@ -66,11 +74,12 @@ export async function respondToProof(token: string, _prev: ProofResponseState, f
       template: approved ? "proof_approved" : "proof_changes",
       toAddress: base.data.email || null,
       subject: `${approved ? "Approved" : "Changes requested"}: Proof V${row.proof.version}`,
-      body: comment || (approved ? APPROVAL_STATEMENT : null),
+      body: comment || (approved ? statement : null),
       status: "logged",
     });
     await logActivity(
       {
+        tenantId,
         action: approved ? "proof.approved" : "proof.changes_requested",
         entityType: "proof",
         entityId: row.proof.id,
@@ -82,7 +91,7 @@ export async function respondToProof(token: string, _prev: ProofResponseState, f
       },
       tx,
     );
-    const [job] = await tx.select().from(jobs).where(eq(jobs.id, row.job.id));
+    const [job] = await tx.select().from(jobs).where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, row.job.id)));
     if (job) {
       if (approved && ["proof_ready", "waiting_approval", "design"].includes(job.status))
         await changeJobStatus(tx, job, "approved_for_production", null, { reason: `customer approved Proof V${row.proof.version}` });
@@ -90,6 +99,7 @@ export async function respondToProof(token: string, _prev: ProofResponseState, f
     }
     await notify(
       {
+        tenantId,
         userIds: [row.job.designerId, row.job.salespersonId],
         kind: "proof",
         title: approved ? `Customer approved Proof V${row.proof.version} — ${jobNo(row.job.number)}` : `Changes requested on ${jobNo(row.job.number)}`,

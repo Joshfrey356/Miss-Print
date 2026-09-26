@@ -4,7 +4,7 @@ import { can } from "@/lib/permissions";
 import { builderOptions, quoteForBuilder } from "@/lib/quotes/builder-data";
 import { db } from "@/lib/db";
 import { quotes } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { PageHeader } from "@/components/ui/page-header";
 import { QuoteBuilder } from "@/components/quotes/quote-builder";
 import { quoteNo } from "@/lib/format";
@@ -15,10 +15,10 @@ export default async function EditQuotePage({ params }: { params: Promise<{ id: 
   const user = await requirePagePermission("quotes.edit");
   const id = Number((await params).id);
   if (!id) notFound();
-  const [q] = await db.select({ number: quotes.number, status: quotes.status }).from(quotes).where(eq(quotes.id, id));
+  const [q] = await db.select({ number: quotes.number, status: quotes.status }).from(quotes).where(and(eq(quotes.tenantId, user.tenantId), eq(quotes.id, id)));
   if (!q) notFound();
   if (q.status === "converted") redirect(`/quotes/${id}`);
-  const [opts, initial] = await Promise.all([builderOptions(), quoteForBuilder(id)]);
+  const [opts, initial] = await Promise.all([builderOptions(user.tenantId), quoteForBuilder(user.tenantId, id)]);
   if (!initial) notFound();
   return (
     <>

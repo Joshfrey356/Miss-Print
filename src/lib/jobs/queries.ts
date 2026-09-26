@@ -20,6 +20,7 @@ import { addDays, fmtSize, today } from "@/lib/format";
 import { ACTIVE_STATUSES, BOARD_COLUMNS, OPEN_STATUSES, READY_STATUSES, WORK_STATUSES } from "@/lib/jobs/workflow";
 import type { SessionUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
+import { getLocations } from "@/lib/lookups";
 
 const designer = aliasedTable(users, "designer");
 const producer = aliasedTable(users, "producer");
@@ -165,7 +166,8 @@ const jobCardSelect = {
   hasArtwork: sql<boolean>`exists (select 1 from ${files} f where f.job_id = ${jobs.id} and f.folder in ('original_artwork','customer','production') and f.archived_at is null)`,
 };
 
-function baseJobQuery() {
+/** Job cards of one shop, filtered by `conds`. */
+function baseJobQuery(tenantId: number, ...conds: (SQL | undefined)[]) {
   return db
     .select(jobCardSelect)
     .from(jobs)
@@ -176,6 +178,7 @@ function baseJobQuery() {
     .leftJoin(producer, eq(producer.id, jobs.productionId))
     .leftJoin(installer, eq(installer.id, jobs.installerId))
     .leftJoin(sales, eq(sales.id, jobs.salespersonId))
+    .where(and(eq(jobs.tenantId, tenantId), ...conds))
     .$dynamic();
 }
 
@@ -186,9 +189,10 @@ function summarize(i: { q: number; w: string | null; h: string | null; m: string
   return [i.q > 1 ? `${i.q.toLocaleString()} pcs` : null, fmtSize(i.w ? Number(i.w) : null, i.h ? Number(i.h) : null) || null, i.m].filter(Boolean).join(" · ") || null;
 }
 
-function decorate<T extends { firstItem: { q: number; w: string | null; h: string | null; m: string | null } | null; status: JobStatus; dueDate: string | null; designer: string | null; production: string | null; installer: string | null; sales: string | null; designerColor: string | null; productionColor: string | null; installerColor: string | null; salesColor: string | null; totalCents: number }>(rows: T[], user: SessionUser) {
+function decorate<T extends { locationCode: string | null; firstItem: { q: number; w: string | null; h: string | null; m: string | null } | null; status: JobStatus; dueDate: string | null; designer: string | null; production: string | null; installer: string | null; sales: string | null; designerColor: string | null; productionColor: string | null; installerColor: string | null; salesColor: string | null; totalCents: number }>(rows: T[], user: SessionUser, locs: { code: string }[]) {
   const t = today();
   const showMoney = can(user.role, "financials.view");
+  const locIndex = new Map(locs.map((l, i) => [l.code, i]));
   return rows.map((r) => {
     const owner = ownerFor(r.status, r);
     const ownerColor =
@@ -199,6 +203,7 @@ function decorate<T extends { firstItem: { q: number; w: string | null; h: strin
       totalCents: showMoney ? r.totalCents : null,
       owner: owner ?? null,
       ownerColor: ownerColor ?? null,
+      locationIndex: r.locationCode ? (locIndex.get(r.locationCode) ?? null) : null,
       overdue: !!r.dueDate && r.dueDate < t && WORK_STATUSES.includes(r.status),
     };
   });
@@ -207,7 +212,7 @@ function decorate<T extends { firstItem: { q: number; w: string | null; h: strin
 export async function listJobs(f: JobFilter, user: SessionUser) {
   const pageSize = 30;
   const page = Math.max(1, f.page ?? 1);
-  const where = and(...filterWhere(f, user));
+  const conds = filterWhere(f, user);
   const dir = f.dir === "desc" ? desc : asc;
   const order =
     f.sort === "number" ? [dir(jobs.number)] :
@@ -217,33 +222,32 @@ export async function listJobs(f: JobFilter, user: SessionUser) {
     f.sort === "created" ? [dir(jobs.createdAt)] :
     (f.view === "completed" || f.view === "all") && !f.sort ? [desc(jobs.completedAt), desc(jobs.number)] :
     [sql`${jobs.dueDate} ${f.dir === "desc" ? sql`desc` : sql`asc`} nulls last`, desc(jobs.priority), asc(jobs.number)];
-  const [rows, [{ n }]] = await Promise.all([
-    baseJobQuery().where(where).orderBy(...order).limit(pageSize).offset((page - 1) * pageSize),
+  const [rows, [{ n }], locs] = await Promise.all([
+    baseJobQuery(user.tenantId, ...conds).orderBy(...order).limit(pageSize).offset((page - 1) * pageSize),
     db
       .select({ n: sql<number>`count(*)::int` })
       .from(jobs)
       .innerJoin(customers, eq(customers.id, jobs.customerId))
       .leftJoin(locations, eq(locations.id, jobs.locationId))
-      .where(where),
+      .where(and(eq(jobs.tenantId, user.tenantId), ...conds)),
+    getLocations(user.tenantId),
   ]);
-  return { rows: decorate(rows, user), total: n, page, pageSize };
+  return { rows: decorate(rows, user, locs), total: n, page, pageSize };
 }
 
 /** Jobs for the production board: all open jobs (not on hold/cancelled) + completed in the last 7 days. */
 export async function boardJobs(user: SessionUser) {
   const since = new Date(Date.now() - 7 * 86400000);
-  const rows = await baseJobQuery()
-    .where(
-      and(
-        isNull(jobs.archivedAt),
-        or(
-          and(inArray(jobs.status, OPEN_STATUSES), ne(jobs.status, "on_hold")),
-          and(eq(jobs.status, "completed"), gte(jobs.completedAt, since)),
-        ),
-      ),
-    )
-    .orderBy(asc(jobs.boardOrder), sql`${jobs.dueDate} asc nulls last`, desc(jobs.priority));
-  return decorate(rows, user);
+  const locsP = getLocations(user.tenantId);
+  const rows = await baseJobQuery(
+    user.tenantId,
+    isNull(jobs.archivedAt),
+    or(
+      and(inArray(jobs.status, OPEN_STATUSES), ne(jobs.status, "on_hold")),
+      and(eq(jobs.status, "completed"), gte(jobs.completedAt, since)),
+    ),
+  ).orderBy(asc(jobs.boardOrder), sql`${jobs.dueDate} asc nulls last`, desc(jobs.priority));
+  return decorate(rows, user, await locsP);
 }
 
 /** Everything the job page needs. Money fields are removed for roles that can't see them. */
@@ -265,59 +269,61 @@ export async function getJobDetail(number: number, user: SessionUser) {
       contact: { id: customerContacts.id, name: customerContacts.name, phone: customerContacts.phone, email: customerContacts.email },
       location: { id: locations.id, code: locations.code, name: locations.name },
       category: { id: productCategories.id, name: productCategories.name, slug: productCategories.slug, group: productCategories.group },
-      quoteNumber: sql<number | null>`(select q.number from quotes q where q.id = ${jobs.quoteId})`,
+      quoteNumber: sql<number | null>`(select q.number from quotes q where q.tenant_id = ${jobs.tenantId} and q.id = ${jobs.quoteId})`,
     })
     .from(jobs)
     .innerJoin(customers, eq(customers.id, jobs.customerId))
     .leftJoin(customerContacts, eq(customerContacts.id, jobs.contactId))
     .leftJoin(locations, eq(locations.id, jobs.locationId))
     .leftJoin(productCategories, eq(productCategories.id, jobs.categoryId))
-    .where(eq(jobs.number, number));
+    .where(and(eq(jobs.tenantId, user.tenantId), eq(jobs.number, number)));
   if (!row) return null;
   const jobId = row.job.id;
+  const tenantId = user.tenantId;
 
-  const [items, fileRows, proofRows, history, activity, invoiceRows, contacts, reorderOf] = await Promise.all([
-    db.select().from(jobItems).where(eq(jobItems.jobId, jobId)).orderBy(asc(jobItems.sortOrder), asc(jobItems.id)),
+  const [items, fileRows, proofRows, history, activity, invoiceRows, contacts, reorderOf, locs] = await Promise.all([
+    db.select().from(jobItems).where(and(eq(jobItems.tenantId, tenantId), eq(jobItems.jobId, jobId))).orderBy(asc(jobItems.sortOrder), asc(jobItems.id)),
     db
       .select({ id: files.id, folder: files.folder, filename: files.filename, mimeType: files.mimeType, sizeBytes: files.sizeBytes, preflightStatus: files.preflightStatus, preflight: files.preflight, createdAt: files.createdAt, uploadedBy: users.name })
       .from(files)
       .leftJoin(users, eq(users.id, files.uploadedBy))
-      .where(and(eq(files.jobId, jobId), isNull(files.archivedAt)))
+      .where(and(eq(files.tenantId, tenantId), eq(files.jobId, jobId), isNull(files.archivedAt)))
       .orderBy(desc(files.createdAt)),
     db
       .select({ proof: proofs, filename: files.filename, mimeType: files.mimeType, sentByName: users.name })
       .from(proofs)
       .innerJoin(files, eq(files.id, proofs.fileId))
       .leftJoin(users, eq(users.id, proofs.sentBy))
-      .where(eq(proofs.jobId, jobId))
+      .where(and(eq(proofs.tenantId, tenantId), eq(proofs.jobId, jobId)))
       .orderBy(desc(proofs.version)),
     db
       .select({ id: jobStatusHistory.id, from: jobStatusHistory.fromStatus, to: jobStatusHistory.toStatus, at: jobStatusHistory.changedAt, by: users.name, note: jobStatusHistory.note })
       .from(jobStatusHistory)
       .leftJoin(users, eq(users.id, jobStatusHistory.changedBy))
-      .where(eq(jobStatusHistory.jobId, jobId))
+      .where(and(eq(jobStatusHistory.tenantId, tenantId), eq(jobStatusHistory.jobId, jobId)))
       .orderBy(desc(jobStatusHistory.changedAt)),
     db
       .select({ id: activityLogs.id, action: activityLogs.action, summary: activityLogs.summary, data: activityLogs.data, at: activityLogs.createdAt, by: users.name, byColor: users.color })
       .from(activityLogs)
       .leftJoin(users, eq(users.id, activityLogs.actorId))
-      .where(eq(activityLogs.jobId, jobId))
+      .where(and(eq(activityLogs.tenantId, tenantId), eq(activityLogs.jobId, jobId)))
       .orderBy(desc(activityLogs.createdAt))
       .limit(200),
     can(user.role, "money.view") || can(user.role, "financials.view")
       ? db
           .select({ id: invoices.id, number: invoices.number, status: invoices.status, totalCents: invoices.totalCents, paidCents: invoices.paidCents, dueDate: invoices.dueDate, issueDate: invoices.issueDate })
           .from(invoices)
-          .where(eq(invoices.jobId, jobId))
+          .where(and(eq(invoices.tenantId, tenantId), eq(invoices.jobId, jobId)))
           .orderBy(desc(invoices.createdAt))
       : Promise.resolve([]),
     db
       .select({ id: customerContacts.id, name: customerContacts.name })
       .from(customerContacts)
-      .where(and(eq(customerContacts.customerId, row.customer.id), isNull(customerContacts.archivedAt))),
+      .where(and(eq(customerContacts.tenantId, tenantId), eq(customerContacts.customerId, row.customer.id), isNull(customerContacts.archivedAt))),
     row.job.reorderOfJobId
-      ? db.select({ number: jobs.number, title: jobs.title }).from(jobs).where(eq(jobs.id, row.job.reorderOfJobId))
+      ? db.select({ number: jobs.number, title: jobs.title }).from(jobs).where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, row.job.reorderOfJobId)))
       : Promise.resolve([]),
+    getLocations(tenantId),
   ]);
 
   const showMoney = can(user.role, "financials.view");
@@ -354,6 +360,8 @@ export async function getJobDetail(number: number, user: SessionUser) {
     invoices: invoiceRows,
     contacts,
     reorderOf: reorderOf[0] ?? null,
+    /** Position of the job's location in the shop's location list (for its color). */
+    locationIndex: row.location ? locs.findIndex((l) => l.id === row.location!.id) : null,
     canSeeMoney: showMoney,
     canSeeCost: showCost,
   };
@@ -375,16 +383,16 @@ export async function jobViewCounts(user: SessionUser) {
       hold: sql<number>`count(*) filter (where ${jobs.status} = 'on_hold')::int`,
     })
     .from(jobs)
-    .where(isNull(jobs.archivedAt));
+    .where(and(eq(jobs.tenantId, user.tenantId), isNull(jobs.archivedAt)));
   return r!;
 }
 
 /** Last N jobs of a customer (for reorder hints etc.) */
-export async function recentCustomerJobs(customerId: number, limit = 5) {
+export async function recentCustomerJobs(tenantId: number, customerId: number, limit = 5) {
   return db
     .select({ id: jobs.id, number: jobs.number, title: jobs.title, status: jobs.status, completedAt: jobs.completedAt })
     .from(jobs)
-    .where(and(eq(jobs.customerId, customerId), isNull(jobs.archivedAt), isNotNull(jobs.number), notInArray(jobs.status, ["cancelled"])))
+    .where(and(eq(jobs.tenantId, tenantId), eq(jobs.customerId, customerId), isNull(jobs.archivedAt), isNotNull(jobs.number), notInArray(jobs.status, ["cancelled"])))
     .orderBy(desc(jobs.createdAt))
     .limit(limit);
 }

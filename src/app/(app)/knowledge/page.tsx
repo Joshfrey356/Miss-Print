@@ -1,10 +1,11 @@
 import Link from "next/link";
-import { and, asc, desc, ilike, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { Archive, BookOpen, Plus, Search } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { knowledgeArticles } from "@/lib/db/schema";
 import { canEditKnowledge } from "@/lib/admin/knowledge";
+import { getSettings } from "@/lib/settings";
 import { timeAgo } from "@/lib/format";
 import { LinkButton } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -23,20 +24,25 @@ export default async function KnowledgePage({ searchParams }: { searchParams: Pr
   const showArchived = editor && sp.archived === "1";
   const qText = (sp.q ?? "").trim().slice(0, 100);
   const like = `%${qText.replace(/[\\%_]/g, (c) => "\\" + c)}%`;
-  const [rows, [archivedCount]] = await Promise.all([
+  const [rows, [archivedCount], { company }] = await Promise.all([
     db
       .select({ id: knowledgeArticles.id, title: knowledgeArticles.title, category: knowledgeArticles.category, body: knowledgeArticles.body, updatedAt: knowledgeArticles.updatedAt })
       .from(knowledgeArticles)
       .where(
         and(
+          eq(knowledgeArticles.tenantId, user.tenantId),
           showArchived ? isNotNull(knowledgeArticles.archivedAt) : isNull(knowledgeArticles.archivedAt),
           qText ? or(ilike(knowledgeArticles.title, like), ilike(knowledgeArticles.body, like), ilike(knowledgeArticles.category, like)) : undefined,
         ),
       )
       .orderBy(asc(knowledgeArticles.category), qText ? desc(sql`${knowledgeArticles.title} ilike ${like}`) : asc(knowledgeArticles.title), asc(knowledgeArticles.title)),
     editor
-      ? db.select({ n: sql<number>`count(*)::int` }).from(knowledgeArticles).where(isNotNull(knowledgeArticles.archivedAt))
+      ? db
+          .select({ n: sql<number>`count(*)::int` })
+          .from(knowledgeArticles)
+          .where(and(eq(knowledgeArticles.tenantId, user.tenantId), isNotNull(knowledgeArticles.archivedAt)))
       : Promise.resolve([{ n: 0 }]),
+    getSettings(user.tenantId),
   ]);
 
   const groups = new Map<string, typeof rows>();
@@ -46,7 +52,11 @@ export default async function KnowledgePage({ searchParams }: { searchParams: Pr
     <div className="mx-auto max-w-4xl">
       <PageHeader
         title={showArchived ? "Archived articles" : "Knowledge"}
-        subtitle={showArchived ? "Hidden from everyone else. Open one to restore it." : "How we do things at Miss Print — pricing, checklists, phone numbers and more."}
+        subtitle={
+          showArchived
+            ? "Hidden from everyone else. Open one to restore it."
+            : `How we do things ${company.name ? `at ${company.name}` : "here"} — pricing, checklists, phone numbers and more.`
+        }
         back={showArchived ? { href: "/knowledge", label: "Knowledge" } : undefined}
         actions={
           editor && !showArchived ? (

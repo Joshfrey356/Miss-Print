@@ -6,19 +6,23 @@ The source of truth is [`src/lib/db/schema.ts`](../src/lib/db/schema.ts) (Drizzl
 
 | Rule | Why |
 |---|---|
+| **Multi-tenant: every business table has `tenant_id`** | Each print shop is a tenant (`tenants`). Every query is scoped with `tenant_id`, and references between business tables are composite foreign keys `(tenant_id, x_id) → x(tenant_id, id)`, so the database itself refuses a row that points at another shop's data. Only `tenants`, `sessions`, `login_attempts` and `mentions` have no `tenant_id`. |
 | **Money is integer cents** (`*_cents`) | No floating-point rounding errors. `$185.00` is stored as `18500`. |
 | **Dimensions in inches** (`width_in`, `height_in`, numeric) | One unit everywhere. The UI shows feet (`4' × 8'`) when the size is whole feet. |
 | **Business dates are `date`** (`due_date`, `issue_date`) | "Due Friday" means Friday in shop time (America/Chicago), not a UTC instant. |
 | **Moments are `timestamptz`** (`created_at`, `sent_at`) | The exact time something happened. |
 | **Soft delete** (`archived_at`) | Business records are never casually deleted. |
 | **Void, don't delete** (`invoices.voided_at` + `void_reason`, `payments.voided_at`) | Financial records need stronger protection. |
-| **Human-readable numbers from sequences** | `job_number_seq` → **MP-10428**, `quote_number_seq` → **Q-5012**, `invoice_number_seq` → **INV-7001**. They never collide, even when two people create jobs at the same moment. |
+| **Human-readable numbers per shop** | Counters on `tenants` (`next_job_number` → **MP-10428**, `next_quote_number` → **Q-5012**, `next_invoice_number` → **INV-7001**), handed out by `nextNumber()` inside the inserting transaction. Numbers are unique per shop (`unique(tenant_id, number)`) and never collide, even when two people create jobs at the same moment. |
 | **`external_id` columns** | Ready for QuickBooks / Google Calendar sync without schema changes. |
 | **`pg_trgm` indexes** on names and titles | Fast fuzzy search ("munster polce" still finds Munster Police). |
 
 ## Entity map
 
 ```
+tenants (one per print shop: name, logo, number counters)
+   └─ every table below carries tenant_id
+
 locations ─┬─ users ── sessions
            │
 customers ─┼─ customer_contacts
@@ -46,13 +50,14 @@ login_attempts (rate limiting)
 
 | Table | Purpose | Key columns |
 |---|---|---|
-| `locations` | Munster (customer-facing), Hammond (production), Off-site (installs) | `code`, `name`, `role`, `address`, `is_customer_facing` |
-| `users` | Employees. One role each. | `role` (owner, manager, sales, designer, production, installer, accounting), `handle` (used for @mentions), `password_hash` (bcrypt), `notification_prefs` (jsonb), `active` |
+| `tenants` | One row per print shop using the app. White-label brand and per-shop number counters. | `slug` (for `/login?shop=`), `name` (brand name), `logo_storage_key`/`logo_mime_type` (served at `/brand/<id>/logo`), `next_job_number`, `next_quote_number`, `next_invoice_number`, `archived_at` (suspends the shop) |
+| `locations` | A shop's places, e.g. Munster (customer-facing), Hammond (production), Off-site (installs). `code` is unique per shop. | `code`, `name`, `role`, `address`, `is_customer_facing` |
+| `users` | Employees of one shop. One role each. **Email is unique across all shops** (it decides which shop you sign in to); `handle` is unique per shop. | `role` (owner, manager, sales, designer, production, installer, accounting), `handle` (used for @mentions), `password_hash` (bcrypt), `notification_prefs` (jsonb), `active` |
 | `sessions` | Signed-in devices. **Only a SHA-256 hash of the token is stored.** | `id` (hash), `user_id`, `expires_at`, `ip`, `user_agent` |
 | `login_attempts` | Rate limiting for sign-in (per email and per IP) | `key`, `success`, `created_at` |
-| `company_settings` | Key/value company profile and **business rules** | `key` = `business_rules` \| `company` \| `automations` \| `quote_valid_days` |
+| `company_settings` | Per-shop key/value company profile and **business rules**. Primary key `(tenant_id, key)`. | `key` = `business_rules` \| `company` \| `automations` \| `quote_valid_days` |
 
-Permissions are defined in code (`src/lib/permissions.ts`), not in tables. Seven fixed roles are easier to reason about than a permission editor. If Miss Print later needs custom roles, add `roles` and `role_permissions` tables.
+Permissions are defined in code (`src/lib/permissions.ts`), not in tables. Seven fixed roles are easier to reason about than a permission editor. If a shop later needs custom roles, add `roles` and `role_permissions` tables.
 
 ### Customers (CRM)
 

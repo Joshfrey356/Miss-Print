@@ -5,20 +5,20 @@ import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { DndContext, DragOverlay, PointerSensor, TouchSensor, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { toast } from "sonner";
 import { BOARD_COLUMNS, STATUS_LABELS, type BoardColumn } from "@/lib/jobs/workflow";
-import { addDays, today } from "@/lib/format";
+import { addDays, jobNo, today } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { moveJobOnBoard } from "@/app/(app)/jobs/actions";
 import { JobCardView, sortCards, type BoardCard } from "./job-card";
 
 type Person = { id: number; name: string };
+/** The shop's own locations, in its sort order. */
+type Location = { code: string; name: string };
 export type BoardJob = BoardCard & { designer: string | null; production: string | null; installer: string | null; sales: string | null };
 
 const FILTERS = [
   { key: "today", label: "Due today" },
   { key: "week", label: "This week" },
   { key: "rush", label: "Rush" },
-  { key: "MUNSTER", label: "Munster" },
-  { key: "HAMMOND", label: "Hammond" },
 ];
 const DEPARTMENTS = [
   { key: "front", label: "Front counter" },
@@ -27,7 +27,7 @@ const DEPARTMENTS = [
   { key: "install", label: "Installation" },
 ];
 
-export function ProductionBoard({ jobs: initial, people, canMove }: { jobs: BoardJob[]; people: Person[]; canMove: boolean }) {
+export function ProductionBoard({ jobs: initial, people, locations, canMove }: { jobs: BoardJob[]; people: Person[]; locations: Location[]; canMove: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
@@ -42,6 +42,10 @@ export function ProductionBoard({ jobs: initial, people, canMove }: { jobs: Boar
   }
 
   const active = new Set((params.get("f") ?? "").split(",").filter(Boolean));
+  // Location chips use the location code as their key; only one location at a time.
+  const locCodes = new Set(locations.map((l) => l.code));
+  const activeLoc = [...active].find((k) => locCodes.has(k));
+  const filters = [...FILTERS, ...(locations.length > 1 ? locations.map((l) => ({ key: l.code, label: l.name })) : [])];
   const dept = params.get("dept") ?? "";
   const person = params.get("person") ?? "";
   const setParam = (k: string, v: string) => {
@@ -55,8 +59,7 @@ export function ProductionBoard({ jobs: initial, people, canMove }: { jobs: Boar
     if (s.has(key)) s.delete(key);
     else {
       s.add(key);
-      if (key === "MUNSTER") s.delete("HAMMOND");
-      if (key === "HAMMOND") s.delete("MUNSTER");
+      if (locCodes.has(key)) for (const c of locCodes) if (c !== key) s.delete(c);
       if (key === "today") s.delete("week");
       if (key === "week") s.delete("today");
     }
@@ -70,13 +73,12 @@ export function ProductionBoard({ jobs: initial, people, canMove }: { jobs: Boar
       if (active.has("today") && !(j.dueDate && j.dueDate <= t)) return false;
       if (active.has("week") && !(j.dueDate && j.dueDate <= addDays(t, 7))) return false;
       if (active.has("rush") && j.priority === "normal") return false;
-      if (active.has("MUNSTER") && j.locationCode !== "MUNSTER") return false;
-      if (active.has("HAMMOND") && j.locationCode !== "HAMMOND") return false;
+      if (activeLoc && j.locationCode !== activeLoc) return false;
       if (personName && ![j.designer, j.production, j.installer, j.sales].includes(personName)) return false;
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobs, params, people, t]);
+  }, [jobs, params, people, locations, t]);
 
   const columns = BOARD_COLUMNS.filter((c) => !dept || c.department === dept || (dept === "front" && c.key === "complete"));
 
@@ -97,7 +99,7 @@ export function ProductionBoard({ jobs: initial, people, canMove }: { jobs: Boar
       if (!r.ok) {
         setJobs(before);
         toast.error(r.error);
-      } else toast.success(`MP-${job.number} → ${STATUS_LABELS[col.dropStatus]}`);
+      } else toast.success(`${jobNo(job.number)} → ${STATUS_LABELS[col.dropStatus]}`);
     });
   }
 
@@ -106,7 +108,7 @@ export function ProductionBoard({ jobs: initial, people, canMove }: { jobs: Boar
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        {FILTERS.map((f) => (
+        {filters.map((f) => (
           <button
             key={f.key}
             onClick={() => toggle(f.key)}

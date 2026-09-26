@@ -21,7 +21,7 @@ export default async function NotificationsPage({ searchParams }: { searchParams
   const sp = await searchParams;
   const tab = sp.tab === "all" ? "all" : "unread";
 
-  const mineOnly = eq(notifications.userId, user.id);
+  const mineOnly = and(eq(notifications.tenantId, user.tenantId), eq(notifications.userId, user.id));
   const [items, [{ unread }]] = await Promise.all([
     db
       .select({

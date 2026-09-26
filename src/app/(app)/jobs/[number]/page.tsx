@@ -31,7 +31,8 @@ import { cn } from "@/lib/utils";
 
 export async function generateMetadata({ params }: { params: Promise<{ number: string }> }) {
   const { number } = await params;
-  return { title: `MP-${parseJobNumber(number) ?? number}` };
+  const n = parseJobNumber(number);
+  return { title: n ? jobNo(n) : number };
 }
 
 export default async function JobPage({ params, searchParams }: { params: Promise<{ number: string }>; searchParams: Promise<{ tab?: string }> }) {
@@ -49,17 +50,17 @@ export default async function JobPage({ params, searchParams }: { params: Promis
   const canStatus = can(r, "jobs.status");
   const canSeeCost = can(r, "margins.view");
   const [people, categories, locations, messages, tasks, profit, jobExpenses] = await Promise.all([
-    getActiveUsers(),
-    getCategories(),
-    getLocations(),
-    can(r, "messages.use") ? getJobMessages(job.id) : Promise.resolve([]),
-    getTasksFor({ jobId: job.id }),
-    canSeeCost ? getJobProfitability(job.id) : Promise.resolve(null),
+    getActiveUsers(user.tenantId),
+    getCategories(user.tenantId),
+    getLocations(user.tenantId),
+    can(r, "messages.use") ? getJobMessages(user.tenantId, job.id) : Promise.resolve([]),
+    getTasksFor(user.tenantId, { jobId: job.id }),
+    canSeeCost ? getJobProfitability(user.tenantId, job.id) : Promise.resolve(null),
     canSeeCost
       ? db
           .select({ id: expenses.id, vendorName: expenses.vendorName, amountCents: expenses.amountCents, category: expenses.category, spentOn: expenses.spentOn, receiptFileId: expenses.receiptFileId })
           .from(expenses)
-          .where(and(eq(expenses.jobId, job.id), isNull(expenses.archivedAt)))
+          .where(and(eq(expenses.tenantId, user.tenantId), eq(expenses.jobId, job.id), isNull(expenses.archivedAt)))
           .orderBy(desc(expenses.spentOn))
       : Promise.resolve([]),
   ]);
@@ -114,7 +115,7 @@ export default async function JobPage({ params, searchParams }: { params: Promis
                 <Truck className="size-4 text-slate-400" /> {FULFILLMENT_LABELS[job.fulfillment]}
                 {job.fulfillmentAt && ` · ${fmtDateTime(job.fulfillmentAt)}`}
               </span>
-              <LocationTag code={d.location?.code ?? null} name={d.location?.name ?? null} />
+              <LocationTag name={d.location?.name ?? null} index={d.locationIndex} />
             </div>
           </div>
           <HeaderActions

@@ -13,7 +13,7 @@ export type IntegrationStatus = {
 const set = (name: string) => Boolean(process.env[name] && process.env[name]!.trim() !== "");
 
 /** Integration status from environment variables. Never returns secret values, only whether they are set. */
-export function getIntegrationStatuses(): IntegrationStatus[] {
+export function getIntegrationStatuses(company: { name: string; email: string }): IntegrationStatus[] {
   const email = (process.env.EMAIL_PROVIDER ?? "console").toLowerCase();
   let storage: string;
   try {
@@ -25,6 +25,9 @@ export function getIntegrationStatuses(): IntegrationStatus[] {
   const ai = (process.env.AI_PROVIDER ?? "none").toLowerCase();
 
   const emailLive = email === "resend" && set("RESEND_API_KEY");
+  // Emails go out under the shop's own name from the platform address (EMAIL_FROM); replies go to the shop.
+  const fromEnv = process.env.EMAIL_FROM?.trim();
+  const fromAddress = fromEnv ? (fromEnv.match(/<([^>]+)>/)?.[1] ?? fromEnv) : "the address in EMAIL_FROM";
   return [
     {
       key: "email",
@@ -36,7 +39,10 @@ export function getIntegrationStatuses(): IntegrationStatus[] {
         emailLive
           ? "Emails go out through Resend."
           : "Emails are written to the server log instead of being sent. Set EMAIL_PROVIDER=resend and RESEND_API_KEY to send for real.",
-        `From address: ${process.env.EMAIL_FROM ?? "Miss Print <orders@missprintusa.com>"}`,
+        `Sent as: ${company.name || "Your company name"} <${fromAddress}>`,
+        company.email
+          ? `Customer replies go to ${company.email}.`
+          : "Customer replies go to your company email. Add it under Company to receive them.",
       ],
     },
     {
@@ -77,7 +83,7 @@ export function getIntegrationStatuses(): IntegrationStatus[] {
     },
     {
       key: "ai",
-      name: "Ask Miss Print (AI assistant)",
+      name: "AI assistant",
       what: "Answer questions from your own records, like “What did we charge ABC Plumbing for their last banner?”",
       state: ai !== "none" && set("ANTHROPIC_API_KEY") ? "connected" : "planned",
       stateLabel: ai !== "none" && set("ANTHROPIC_API_KEY") ? "Key set — feature coming in Phase 3" : "Off — planned for Phase 3",

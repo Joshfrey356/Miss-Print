@@ -25,7 +25,7 @@ const TABS: { key: TabKey; label: string; allowed: (c: ReportCtx) => boolean }[]
 export default async function ReportsPage({ searchParams }: { searchParams: Promise<SP> }) {
   const user = await requirePagePermission("reports.basic");
   const sp = await searchParams;
-  const ctx = await getReportCtx(user.role);
+  const ctx = await getReportCtx(user.tenantId, user.role);
   const tabs = TABS.filter((t) => t.allowed(ctx));
   const tab = tabs.find((t) => t.key === sp.tab)?.key ?? tabs[0]!.key;
   const range = resolveRange(sp);
@@ -49,7 +49,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
 type TabProps = { range: DateRange; ctx: ReportCtx; query: Record<string, string> };
 
 async function RevenueTab(p: TabProps) {
-  const t = await q.revenueTotals(p.range);
+  const t = await q.revenueTotals(p.ctx.tenantId, p.range);
   return (
     <>
       <StatRow>
@@ -70,7 +70,7 @@ async function RevenueTab(p: TabProps) {
 }
 
 async function ProfitTab(p: TabProps) {
-  const [jobs, unlinked] = await Promise.all([jobProfitsFor(p.range.from, p.range.to, p.ctx.laborRateCents), q.unlinkedRevenue(p.range)]);
+  const [jobs, unlinked] = await Promise.all([jobProfitsFor(p.ctx.tenantId, p.range.from, p.range.to, p.ctx.laborRateCents), q.unlinkedRevenue(p.ctx.tenantId, p.range)]);
   const revenue = jobs.reduce((s, j) => s + j.revenueCents, 0);
   const cost = jobs.reduce((s, j) => s + j.costCents, 0);
   const margin = marginOf(revenue, cost);
@@ -102,7 +102,7 @@ async function ProfitTab(p: TabProps) {
 }
 
 async function OperationsTab(p: TabProps) {
-  const [s, overdue, proofs] = await Promise.all([q.completionSummary(p.range), q.overdueJobs(1), q.outstandingProofs()]);
+  const [s, overdue, proofs] = await Promise.all([q.completionSummary(p.ctx.tenantId, p.range), q.overdueJobs(p.ctx.tenantId, 1), q.outstandingProofs(p.ctx.tenantId)]);
   const onTime = s.withDue ? s.onTime / s.withDue : null;
   return (
     <>
@@ -139,7 +139,7 @@ async function OperationsTab(p: TabProps) {
 }
 
 async function SalesTab(p: TabProps) {
-  const [s, open] = await Promise.all([q.quoteSummary(p.range), q.openQuotesNow()]);
+  const [s, open] = await Promise.all([q.quoteSummary(p.ctx.tenantId, p.range), q.openQuotesNow(p.ctx.tenantId)]);
   const $ = p.ctx.financial;
   return (
     <>
@@ -168,7 +168,7 @@ async function SalesTab(p: TabProps) {
 }
 
 async function CustomersTab(p: TabProps) {
-  const [rep, inactive] = await Promise.all([q.repeatCustomers(p.range), q.inactiveCustomers(50)]);
+  const [rep, inactive] = await Promise.all([q.repeatCustomers(p.ctx.tenantId, p.range), q.inactiveCustomers(p.ctx.tenantId, 50)]);
   return (
     <>
       <StatRow>

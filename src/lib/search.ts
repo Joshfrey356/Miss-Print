@@ -29,6 +29,7 @@ export async function globalSearch(user: SessionUser, raw: string): Promise<Sear
   const num = q.match(/^(?:mp|q|inv)?[-\s#]?(\d{3,7})$/i)?.[1];
   const phone = digits(q).length >= 4 ? digits(q) : null;
   const out: SearchResult[] = [];
+  const tenantId = user.tenantId; // every query below is limited to the signed-in user's shop
 
   const tasks: Promise<void>[] = [];
 
@@ -41,6 +42,7 @@ export async function globalSearch(user: SessionUser, raw: string): Promise<Sear
           .innerJoin(customers, eq(customers.id, jobs.customerId))
           .where(
             and(
+              eq(jobs.tenantId, tenantId),
               isNull(jobs.archivedAt),
               or(
                 num ? eq(jobs.number, Number(num)) : undefined,
@@ -74,6 +76,7 @@ export async function globalSearch(user: SessionUser, raw: string): Promise<Sear
           .from(customers)
           .where(
             and(
+              eq(customers.tenantId, tenantId),
               isNull(customers.archivedAt),
               or(
                 ilike(customers.name, like),
@@ -93,6 +96,7 @@ export async function globalSearch(user: SessionUser, raw: string): Promise<Sear
           .innerJoin(customers, eq(customers.id, customerContacts.customerId))
           .where(
             and(
+              eq(customerContacts.tenantId, tenantId),
               isNull(customerContacts.archivedAt),
               or(
                 ilike(customerContacts.name, like),
@@ -115,7 +119,13 @@ export async function globalSearch(user: SessionUser, raw: string): Promise<Sear
           .select({ id: quotes.id, number: quotes.number, title: quotes.title, total: quotes.totalCents, customer: customers.name, status: quotes.status })
           .from(quotes)
           .innerJoin(customers, eq(customers.id, quotes.customerId))
-          .where(and(isNull(quotes.archivedAt), or(num ? eq(quotes.number, Number(num)) : undefined, ilike(quotes.title, like), ilike(customers.name, like))))
+          .where(
+            and(
+              eq(quotes.tenantId, tenantId),
+              isNull(quotes.archivedAt),
+              or(num ? eq(quotes.number, Number(num)) : undefined, ilike(quotes.title, like), ilike(customers.name, like)),
+            ),
+          )
           .orderBy(desc(quotes.createdAt))
           .limit(5);
         const showMoney = can(user.role, "financials.view");
@@ -132,7 +142,7 @@ export async function globalSearch(user: SessionUser, raw: string): Promise<Sear
           .select({ id: invoices.id, number: invoices.number, total: invoices.totalCents, customer: customers.name, status: invoices.status })
           .from(invoices)
           .innerJoin(customers, eq(customers.id, invoices.customerId))
-          .where(or(num ? eq(invoices.number, Number(num)) : undefined, ilike(customers.name, like)))
+          .where(and(eq(invoices.tenantId, tenantId), or(num ? eq(invoices.number, Number(num)) : undefined, ilike(customers.name, like))))
           .orderBy(desc(invoices.issueDate))
           .limit(5);
         for (const r of rows)

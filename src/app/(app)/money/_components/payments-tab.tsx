@@ -14,8 +14,8 @@ import { PAYMENT_METHOD_LABELS, PAYMENT_METHODS } from "@/lib/money/labels";
 import { VoidButton } from "./client";
 import { filterInput, FilterLabel, KeepParams, Num, type SP } from "./parts";
 
-export async function PaymentsTab({ params, canVoid }: { params: SP; canVoid: boolean }) {
-  const data = await listPayments(params);
+export async function PaymentsTab({ tenantId, params, canVoid }: { tenantId: number; params: SP; canVoid: boolean }) {
+  const data = await listPayments(tenantId, params);
   const p = { ...params, tab: "payments" };
   const filtered = !!(params.method || params.from || params.to || params.q);
 

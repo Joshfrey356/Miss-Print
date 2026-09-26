@@ -9,14 +9,14 @@ const MATERIAL = ["materials", "ink_toner", "paper", "vinyl", "substrates"];
 const OUTSIDE = ["outside_services", "installation", "shipping"];
 
 /** Quoted vs actual profitability for one job. Actual cost = attached expenses + labor hours × labor cost. */
-export async function getJobProfitability(jobId: number) {
-  const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));
+export async function getJobProfitability(tenantId: number, jobId: number) {
+  const [job] = await db.select().from(jobs).where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, jobId)));
   if (!job) return null;
-  const { rules } = await getSettings();
+  const { rules } = await getSettings(tenantId);
   const rows = await db
     .select({ category: expenses.category, cents: sql<number>`sum(${expenses.amountCents})::int` })
     .from(expenses)
-    .where(and(eq(expenses.jobId, jobId), isNull(expenses.archivedAt)))
+    .where(and(eq(expenses.tenantId, tenantId), eq(expenses.jobId, jobId), isNull(expenses.archivedAt)))
     .groupBy(expenses.category);
   const sum = (cats: string[]) => rows.filter((r) => cats.includes(r.category)).reduce((a, r) => a + r.cents, 0);
   const materialCents = sum(MATERIAL);
@@ -27,7 +27,7 @@ export async function getJobProfitability(jobId: number) {
   const [inv] = await db
     .select({ subtotal: invoices.subtotalCents })
     .from(invoices)
-    .where(and(eq(invoices.jobId, jobId), ne(invoices.status, "void")));
+    .where(and(eq(invoices.tenantId, tenantId), eq(invoices.jobId, jobId), ne(invoices.status, "void")));
   const revenueCents = inv?.subtotal ?? job.subtotalCents; // revenue excludes sales tax
   return {
     revenueCents,

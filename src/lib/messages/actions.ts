@@ -40,7 +40,7 @@ export async function postMessage(formData: FormData): Promise<ActionResult<{ id
       [job] = await db
         .select({ id: jobs.id, number: jobs.number, title: jobs.title, customerId: jobs.customerId })
         .from(jobs)
-        .where(and(eq(jobs.id, jobId), isNull(jobs.archivedAt)));
+        .where(and(eq(jobs.tenantId, user.tenantId), eq(jobs.id, jobId), isNull(jobs.archivedAt)));
       if (!job) throw new UserError("That job was not found.");
     } else if (channelKey) {
       channel = getChannel(channelKey);
@@ -62,11 +62,14 @@ export async function postMessage(formData: FormData): Promise<ActionResult<{ id
       }
     }
 
-    // Who is mentioned? Individual handles + team groups.
+    // Who is mentioned? Individual handles + team groups (handles are unique per shop).
     const handles = parseMentions(body).map(cleanHandle);
     const groupRoles = new Set(MENTION_GROUPS.filter((g) => handles.includes(g.handle)).flatMap((g) => g.roles));
     const people = handles.length
-      ? await db.select({ id: users.id, handle: users.handle, role: users.role }).from(users).where(eq(users.active, true))
+      ? await db
+          .select({ id: users.id, handle: users.handle, role: users.role })
+          .from(users)
+          .where(and(eq(users.tenantId, user.tenantId), eq(users.active, true)))
       : [];
     const mentioned = people
       .filter((p) => handles.includes(p.handle.toLowerCase()) || groupRoles.has(p.role))
@@ -83,12 +86,13 @@ export async function postMessage(formData: FormData): Promise<ActionResult<{ id
     const id = await db.transaction(async (tx) => {
       const [m] = await tx
         .insert(messages)
-        .values({ jobId: job?.id ?? null, channel: job ? null : channel!.key, authorId: user.id, body, fileId, important })
+        .values({ tenantId: user.tenantId, jobId: job?.id ?? null, channel: job ? null : channel!.key, authorId: user.id, body, fileId, important })
         .returning({ id: messages.id });
       if (mentioned.length) {
         await tx.insert(mentions).values(mentioned.map((userId) => ({ messageId: m!.id, userId }))).onConflictDoNothing();
         await notify(
           {
+            tenantId: user.tenantId,
             userIds: mentioned,
             kind: "mention",
             title: `${important ? "Important: " : ""}${firstName} mentioned you ${job ? "on" : "in"} ${where}`,
@@ -102,6 +106,7 @@ export async function postMessage(formData: FormData): Promise<ActionResult<{ id
       if (job) {
         await logActivity(
           {
+            tenantId: user.tenantId,
             action: "job.message",
             entityType: "job",
             entityId: job.id,

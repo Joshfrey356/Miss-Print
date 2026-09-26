@@ -3,6 +3,8 @@ import { db, type Tx } from "@/lib/db";
 import { activityLogs } from "@/lib/db/schema";
 
 export type ActivityInput = {
+  /** The shop this happened in. */
+  tenantId: number;
   action: string; // "job.status_changed"
   entityType: "job" | "quote" | "customer" | "invoice" | "payment" | "expense" | "user" | "setting" | "file" | "proof" | "task" | "message" | "event" | "knowledge";
   entityId?: number | null;
@@ -17,6 +19,7 @@ export type ActivityInput = {
 /** Record who did what, when. Call inside the same transaction as the change when possible. */
 export async function logActivity(input: ActivityInput, tx: Tx | typeof db = db) {
   await tx.insert(activityLogs).values({
+    tenantId: input.tenantId,
     action: input.action,
     entityType: input.entityType,
     entityId: input.entityId ?? null,

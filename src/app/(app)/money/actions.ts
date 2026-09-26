@@ -22,7 +22,7 @@ export async function createInvoiceForJobAction(jobId: number): Promise<ActionRe
   return runAction(async () => {
     const user = await requirePermission("money.edit");
     const id = z.number().int().positive().parse(jobId);
-    const inv = await createInvoiceFromJob(id, { id: user.id, name: user.name });
+    const inv = await createInvoiceFromJob(user.tenantId, id, { id: user.id, name: user.name });
     revalidateMoney();
     revalidatePath("/jobs", "layout");
     revalidatePath("/customers", "layout");
@@ -49,7 +49,7 @@ export async function recordPaymentAction(invoiceId: number, fd: FormData): Prom
       notes: str(fd, "notes"),
     });
     if (p.receivedOn > today(1)) throw new UserError("The payment date can't be in the future.");
-    const pay = await recordPayment(z.number().int().parse(invoiceId), p, { id: user.id, name: user.name });
+    const pay = await recordPayment(user.tenantId, z.number().int().parse(invoiceId), p, { id: user.id, name: user.name });
     revalidateMoney();
     revalidatePath("/jobs", "layout");
     revalidatePath("/customers", "layout");
@@ -60,7 +60,7 @@ export async function recordPaymentAction(invoiceId: number, fd: FormData): Prom
 export async function voidInvoiceAction(invoiceId: number, reason: string): Promise<ActionResult> {
   return runAction(async () => {
     const user = await requirePermission("money.void");
-    await voidInvoice(z.number().int().parse(invoiceId), z.string().max(500).parse(reason ?? ""), { id: user.id, name: user.name });
+    await voidInvoice(user.tenantId, z.number().int().parse(invoiceId), z.string().max(500).parse(reason ?? ""), { id: user.id, name: user.name });
     revalidateMoney();
     revalidatePath("/jobs", "layout");
     revalidatePath("/customers", "layout");
@@ -70,7 +70,7 @@ export async function voidInvoiceAction(invoiceId: number, reason: string): Prom
 export async function voidPaymentAction(paymentId: number, reason: string): Promise<ActionResult> {
   return runAction(async () => {
     const user = await requirePermission("money.void");
-    await voidPayment(z.number().int().parse(paymentId), z.string().max(500).parse(reason ?? ""), { id: user.id, name: user.name });
+    await voidPayment(user.tenantId, z.number().int().parse(paymentId), z.string().max(500).parse(reason ?? ""), { id: user.id, name: user.name });
     revalidateMoney();
     revalidatePath("/jobs", "layout");
     revalidatePath("/customers", "layout");
@@ -80,7 +80,7 @@ export async function voidPaymentAction(paymentId: number, reason: string): Prom
 export async function sendReminderAction(invoiceId: number): Promise<ActionResult<{ to: string }>> {
   return runAction(async () => {
     const user = await requirePermission("money.edit");
-    const r = await sendPaymentReminder(z.number().int().parse(invoiceId), { id: user.id, name: user.name });
+    const r = await sendPaymentReminder(user.tenantId, z.number().int().parse(invoiceId), { id: user.id, name: user.name });
     revalidateMoney();
     revalidatePath("/customers", "layout");
     return r;
@@ -99,7 +99,7 @@ const expenseSchema = z.object({
   notes: z.string().max(2000).nullable(),
 });
 
-async function parseExpense(fd: FormData) {
+async function parseExpense(tenantId: number, fd: FormData) {
   const base = expenseSchema.parse({
     vendorName: str(fd, "vendor"),
     amountCents: parseMoney(str(fd, "amount")),
@@ -108,7 +108,7 @@ async function parseExpense(fd: FormData) {
     paymentMethod: str(fd, "paymentMethod") ? normalizeExpensePayment(str(fd, "paymentMethod")) : null,
     notes: str(fd, "notes"),
   });
-  const job = await jobFromNumberInput(str(fd, "job"));
+  const job = await jobFromNumberInput(tenantId, str(fd, "job"));
   return { input: { ...base, jobId: job?.id ?? null } satisfies ExpenseInput, job };
 }
 
@@ -129,7 +129,7 @@ function afterSave(user: { role: Parameters<typeof can>[0] }, job: { number: num
 export async function createExpenseAction(fd: FormData): Promise<ActionResult<SavedExpense>> {
   return runAction(async () => {
     const user = await requirePermission("expenses.edit");
-    const { input, job } = await parseExpense(fd);
+    const { input, job } = await parseExpense(user.tenantId, fd);
     const file = receiptFrom(fd);
     let receiptFileId: number | null = null;
     if (file) {
@@ -139,7 +139,7 @@ export async function createExpenseAction(fd: FormData): Promise<ActionResult<Sa
         throw new UserError(e instanceof Error ? e.message : "The receipt couldn't be uploaded.");
       }
     }
-    const row = await createExpense({ ...input, receiptFileId }, { id: user.id, name: user.name });
+    const row = await createExpense(user.tenantId, { ...input, receiptFileId }, { id: user.id, name: user.name });
     revalidateMoney();
     if (job) revalidatePath(`/jobs/${job.number}`);
     return { id: row.id, redirectTo: afterSave(user, job, str(fd, "back") === "job") };
@@ -149,7 +149,7 @@ export async function createExpenseAction(fd: FormData): Promise<ActionResult<Sa
 export async function updateExpenseAction(id: number, fd: FormData): Promise<ActionResult<SavedExpense>> {
   return runAction(async () => {
     const user = await requirePermission("expenses.edit");
-    const { input, job } = await parseExpense(fd);
+    const { input, job } = await parseExpense(user.tenantId, fd);
     const file = receiptFrom(fd);
     let receiptFileId: number | null | undefined = undefined;
     if (file) {
@@ -159,7 +159,7 @@ export async function updateExpenseAction(id: number, fd: FormData): Promise<Act
         throw new UserError(e instanceof Error ? e.message : "The receipt couldn't be uploaded.");
       }
     } else if (str(fd, "removeReceipt") === "1") receiptFileId = null;
-    await updateExpense(z.number().int().parse(id), { ...input, receiptFileId }, { id: user.id, name: user.name });
+    await updateExpense(user.tenantId, z.number().int().parse(id), { ...input, receiptFileId }, { id: user.id, name: user.name });
     revalidateMoney();
     revalidatePath("/jobs", "layout");
     return { id, redirectTo: afterSave(user, job, str(fd, "back") === "job") };
@@ -169,7 +169,7 @@ export async function updateExpenseAction(id: number, fd: FormData): Promise<Act
 export async function archiveExpenseAction(id: number): Promise<ActionResult<{ redirectTo: string }>> {
   return runAction(async () => {
     const user = await requirePermission("expenses.edit");
-    await archiveExpense(z.number().int().parse(id), { id: user.id, name: user.name });
+    await archiveExpense(user.tenantId, z.number().int().parse(id), { id: user.id, name: user.name });
     revalidateMoney();
     revalidatePath("/jobs", "layout");
     return { redirectTo: can(user.role, "money.view") ? "/money?tab=expenses" : "/dashboard" };

@@ -231,6 +231,7 @@ export function ActivityCard({
 // Tabs
 // ---------------------------------------------------------------------------
 export async function JobsTable({
+  tenantId,
   customerId,
   showMoney,
   canCreate,
@@ -238,6 +239,7 @@ export async function JobsTable({
   sort,
   dir,
 }: {
+  tenantId: number;
   customerId: number;
   showMoney: boolean;
   canCreate: boolean;
@@ -245,7 +247,7 @@ export async function JobsTable({
   sort?: CustomerJobSort;
   dir: "asc" | "desc";
 }) {
-  const jobs = await getCustomerJobs(customerId, { showMoney, sort: sort ?? "created", dir: sort ? dir : "desc" });
+  const jobs = await getCustomerJobs(tenantId, customerId, { showMoney, sort: sort ?? "created", dir: sort ? dir : "desc" });
   const params = { tab: "jobs" };
   const s = sort ?? "created";
   const d = sort ? dir : "desc";
@@ -311,8 +313,8 @@ export async function JobsTable({
   );
 }
 
-export async function QuotesTable({ customerId, showMoney, canCreate }: { customerId: number; showMoney: boolean; canCreate: boolean }) {
-  const quotes = await getCustomerQuotes(customerId, { showMoney });
+export async function QuotesTable({ tenantId, customerId, showMoney, canCreate }: { tenantId: number; customerId: number; showMoney: boolean; canCreate: boolean }) {
+  const quotes = await getCustomerQuotes(tenantId, customerId, { showMoney });
   return (
     <Card>
       {quotes.length === 0 ? (
@@ -368,8 +370,8 @@ export async function QuotesTable({ customerId, showMoney, canCreate }: { custom
   );
 }
 
-export async function InvoicesTab({ customerId }: { customerId: number }) {
-  const invoices = await getCustomerInvoices(customerId);
+export async function InvoicesTab({ tenantId, customerId }: { tenantId: number; customerId: number }) {
+  const invoices = await getCustomerInvoices(tenantId, customerId);
   const now = today();
   return (
     <Card>
@@ -429,8 +431,8 @@ export async function InvoicesTab({ customerId }: { customerId: number }) {
 
 const fmtSize = (b: number) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : b >= 1024 ? `${Math.round(b / 1024)} KB` : `${b} B`);
 
-export async function FilesTab({ customerId, canUpload }: { customerId: number; canUpload: boolean }) {
-  const files = await getCustomerFiles(customerId);
+export async function FilesTab({ tenantId, customerId, canUpload }: { tenantId: number; customerId: number; canUpload: boolean }) {
+  const files = await getCustomerFiles(tenantId, customerId);
   const groups = new Map<FileFolder, typeof files>();
   for (const f of files) groups.set(f.folder, [...(groups.get(f.folder) ?? []), f]);
   const order = Object.keys(FOLDER_LABELS) as FileFolder[];
@@ -484,8 +486,8 @@ const CHANNEL: Record<string, { label: (dir: string) => string; icon: typeof Mai
   sms: { label: (d) => (d === "inbound" ? "Text received" : "Text sent"), icon: MessageSquare, tone: "bg-violet-50 text-violet-700" },
 };
 
-export async function MessagesTab({ customerId, canLog, showMoney, showPrices }: { customerId: number; canLog: boolean; showMoney: boolean; showPrices: boolean }) {
-  const items = await getCustomerCommunications(customerId, { showMoney, showPrices });
+export async function MessagesTab({ tenantId, customerId, canLog, showMoney, showPrices }: { tenantId: number; customerId: number; canLog: boolean; showMoney: boolean; showPrices: boolean }) {
+  const items = await getCustomerCommunications(tenantId, customerId, { showMoney, showPrices });
   return (
     <div className="grid gap-5 lg:grid-cols-3">
       {canLog && (

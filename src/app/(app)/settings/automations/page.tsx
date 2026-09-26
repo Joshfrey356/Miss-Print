@@ -10,8 +10,8 @@ import { AutomationsForm } from "./form";
 export const metadata = { title: "Customer Messages & Automations" };
 
 export default async function AutomationsPage() {
-  await requirePagePermission("settings.manage");
-  const { automations } = await getSettings();
+  const user = await requirePagePermission("settings.manage");
+  const { automations } = await getSettings(user.tenantId);
   return (
     <SettingsPage title="Customer Messages & Automations" subtitle="Reminders and follow-ups the system could send for you.">
       <div className="mb-5 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-900">

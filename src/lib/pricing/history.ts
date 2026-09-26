@@ -37,7 +37,7 @@ export type SimilarQuery = {
   limit?: number;
 };
 
-export async function findSimilarJobs(q: SimilarQuery): Promise<{ jobs: SimilarJob[]; stats: { count: number; avgCents: number; minCents: number; maxCents: number } | null }> {
+export async function findSimilarJobs(tenantId: number, q: SimilarQuery): Promise<{ jobs: SimilarJob[]; stats: { count: number; avgCents: number; minCents: number; maxCents: number } | null }> {
   const area = q.widthIn && q.heightIn ? q.widthIn * q.heightIn : null;
   const qty = q.quantity && q.quantity > 0 ? q.quantity : null;
   const text = q.text?.trim() || null;
@@ -80,10 +80,10 @@ export async function findSimilarJobs(q: SimilarQuery): Promise<{ jobs: SimilarJ
                     or greatest(word_similarity(${text}::text, ji.description), word_similarity(${text}::text, j.title), word_similarity(${text}::text, coalesce(ji.specs, ''))) >= 0.6)
              ) as close
       from job_items ji
-      join jobs j on j.id = ji.job_id
-      join customers cu on cu.id = j.customer_id
-      left join product_categories pc on pc.id = ji.category_id
-      where j.archived_at is null and j.status <> 'cancelled' and ji.price_cents > 0
+      join jobs j on j.id = ji.job_id and j.tenant_id = ji.tenant_id
+      join customers cu on cu.id = j.customer_id and cu.tenant_id = j.tenant_id
+      left join product_categories pc on pc.id = ji.category_id and pc.tenant_id = ji.tenant_id
+      where ji.tenant_id = ${tenantId} and j.archived_at is null and j.status <> 'cancelled' and ji.price_cents > 0
         and j.created_at > now() - interval '3 years'
         and (${q.excludeJobId ?? null}::int is null or j.id <> ${q.excludeJobId ?? null}::int)
         and (${q.categoryId ?? null}::int is null or ji.category_id = ${q.categoryId ?? null}::int

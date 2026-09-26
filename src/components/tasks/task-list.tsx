@@ -19,8 +19,8 @@ export type { TaskItem, TaskUser } from "@/lib/tasks/types";
 /**
  * A simple checklist of tasks with an inline "Add task" row.
  *
- *   Dashboard:  <TaskList tasks={await getMyTasks(user.id)} users={await getActiveUsers()} compact />
- *   Job page:   <TaskList tasks={await getTasksFor({ jobId: job.id })} users={users} jobId={job.id} />
+ *   Dashboard:  <TaskList tasks={await getMyTasks(user.tenantId, user.id)} users={await getActiveUsers(user.tenantId)} compact />
+ *   Job page:   <TaskList tasks={await getTasksFor(user.tenantId, { jobId: job.id })} users={users} jobId={job.id} />
  *
  * On a job/customer page, new tasks are attached to that job/customer and the job link is hidden.
  */

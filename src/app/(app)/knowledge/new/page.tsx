@@ -13,7 +13,7 @@ export default async function NewArticlePage() {
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader title="New article" back={{ href: "/knowledge", label: "Knowledge" }} subtitle="Write down how something is done, so anyone can look it up." />
-      <ArticleForm categories={await getKnowledgeCategories()} />
+      <ArticleForm categories={await getKnowledgeCategories(user.tenantId)} />
     </div>
   );
 }

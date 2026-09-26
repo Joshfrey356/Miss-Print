@@ -1,15 +1,16 @@
 "use server";
 import { revalidatePath } from "next/cache";
-import { eq } from "drizzle-orm";
+import { and, eq, max } from "drizzle-orm";
 import { z } from "zod";
 import { requirePermission } from "@/lib/auth";
 import { runAction, str, UserError, type ActionResult } from "@/lib/actions";
 import { db } from "@/lib/db";
-import { locations } from "@/lib/db/schema";
+import { locations, tenants } from "@/lib/db/schema";
 import { diff, logActivity } from "@/lib/activity";
 import { getSettings, type AutomationSettings, type CompanyProfile } from "@/lib/settings";
 import { saveSetting } from "@/lib/admin/settings-store";
 import { parseMoney } from "@/lib/format";
+import { newStorageKey, storage } from "@/lib/storage";
 import type { BusinessRules } from "@/lib/pricing/engine";
 
 type Prev = ActionResult | null;
@@ -74,14 +75,14 @@ export async function saveBusinessRules(_prev: Prev, fd: FormData): Promise<Acti
       .max(365, "Quote days can't be more than 365.")
       .parse(validDaysRaw ?? "");
 
-    const current = await getSettings();
+    const current = await getSettings(user.tenantId);
     const changes = diff({ ...current.rules, quoteValidDays: current.quoteValidDays }, { ...next, quoteValidDays });
     if (!changes) return;
     await db.transaction(async (tx) => {
-      await saveSetting("business_rules", next, user.id, tx);
-      await saveSetting("quote_valid_days", quoteValidDays, user.id, tx);
+      await saveSetting(user.tenantId, "business_rules", next, user.id, tx);
+      await saveSetting(user.tenantId, "quote_valid_days", quoteValidDays, user.id, tx);
       await logActivity(
-        { action: "setting.updated", entityType: "setting", actorId: user.id, summary: "Updated business rules", data: { key: "business_rules", ...changes } },
+        { tenantId: user.tenantId, action: "setting.updated", entityType: "setting", actorId: user.id, summary: "Updated business rules", data: { key: "business_rules", ...changes } },
         tx,
       );
     });
@@ -105,18 +106,54 @@ export async function saveCompanyProfile(_prev: Prev, fd: FormData): Promise<Act
     const next: CompanyProfile = companySchema.parse(
       Object.fromEntries(["name", "tagline", "phone", "email", "website", "address", "hours"].map((k) => [k, str(fd, k) ?? ""])),
     );
-    const { company } = await getSettings();
+    const { company } = await getSettings(user.tenantId);
     const changes = diff(company, next);
     if (!changes) return;
     await db.transaction(async (tx) => {
-      await saveSetting("company", next, user.id, tx);
+      // The name is the shop's white-label brand (sidebar, sign-in page, proofs, emails).
+      if (next.name !== company.name) await tx.update(tenants).set({ name: next.name }).where(eq(tenants.id, user.tenantId));
+      await saveSetting(user.tenantId, "company", next, user.id, tx);
       await logActivity(
-        { action: "setting.updated", entityType: "setting", actorId: user.id, summary: "Updated company profile", data: { key: "company", ...changes } },
+        { tenantId: user.tenantId, action: "setting.updated", entityType: "setting", actorId: user.id, summary: "Updated company profile", data: { key: "company", ...changes } },
         tx,
       );
     });
     revalidatePath("/", "layout");
   }, "Company profile saved");
+}
+
+const LOGO_TYPES: Record<string, string> = { "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif", "image/svg+xml": ".svg" };
+const MAX_LOGO_BYTES = 2 * 1024 * 1024;
+
+/** Upload the shop's logo (white-label). Replaces the current one; old files are kept, never overwritten. */
+export async function uploadCompanyLogo(_prev: Prev, fd: FormData): Promise<ActionResult> {
+  return runAction(async () => {
+    const user = await requirePermission("settings.manage");
+    const file = fd.get("logo");
+    if (!(file instanceof File) || file.size === 0) throw new UserError("Choose a logo image to upload.");
+    const ext = LOGO_TYPES[file.type];
+    if (!ext) throw new UserError("Use a PNG, JPG, WebP, GIF or SVG image for the logo.");
+    if (file.size > MAX_LOGO_BYTES) throw new UserError("The logo must be smaller than 2 MB.");
+    const key = newStorageKey(user.tenantId, `logo${ext}`);
+    await storage().put(key, Buffer.from(await file.arrayBuffer()), file.type);
+    await db.transaction(async (tx) => {
+      await tx.update(tenants).set({ logoStorageKey: key, logoMimeType: file.type, logoUpdatedAt: new Date() }).where(eq(tenants.id, user.tenantId));
+      await logActivity({ tenantId: user.tenantId, action: "setting.updated", entityType: "setting", actorId: user.id, summary: "Uploaded a new company logo", data: { key: "logo" } }, tx);
+    });
+    revalidatePath("/", "layout");
+  }, "Logo saved");
+}
+
+/** Go back to showing the company name as the logo. */
+export async function removeCompanyLogo(): Promise<ActionResult> {
+  return runAction(async () => {
+    const user = await requirePermission("settings.manage");
+    await db.transaction(async (tx) => {
+      await tx.update(tenants).set({ logoStorageKey: null, logoMimeType: null, logoUpdatedAt: new Date() }).where(eq(tenants.id, user.tenantId));
+      await logActivity({ tenantId: user.tenantId, action: "setting.updated", entityType: "setting", actorId: user.id, summary: "Removed the company logo", data: { key: "logo" } }, tx);
+    });
+    revalidatePath("/", "layout");
+  }, "Logo removed");
 }
 
 const locationSchema = z.object({
@@ -137,15 +174,16 @@ export async function saveLocation(_prev: Prev, fd: FormData): Promise<ActionRes
       address: str(fd, "address"),
       phone: str(fd, "phone"),
     });
-    const [before] = await db.select().from(locations).where(eq(locations.id, next.id));
+    const [before] = await db.select().from(locations).where(and(eq(locations.tenantId, user.tenantId), eq(locations.id, next.id)));
     if (!before) throw new UserError("That location no longer exists.");
     const { id, ...fields } = next;
     const changes = diff(before, fields);
     if (!changes) return;
     await db.transaction(async (tx) => {
-      await tx.update(locations).set(fields).where(eq(locations.id, id));
+      await tx.update(locations).set(fields).where(and(eq(locations.tenantId, user.tenantId), eq(locations.id, id)));
       await logActivity(
         {
+          tenantId: user.tenantId,
           action: "setting.updated",
           entityType: "setting",
           entityId: id,
@@ -158,6 +196,47 @@ export async function saveLocation(_prev: Prev, fd: FormData): Promise<ActionRes
     });
     revalidatePath("/", "layout");
   }, "Location saved");
+}
+
+const newLocationSchema = z.object({
+  name: z.string().min(1, "Enter the location name.").max(80),
+  role: z.string().max(200),
+  address: z.string().max(300).nullable(),
+  phone: z.string().max(40).nullable(),
+  isCustomerFacing: z.boolean(),
+});
+
+/** Add a location (e.g. a second shop or a production building). */
+export async function addLocation(_prev: Prev, fd: FormData): Promise<ActionResult> {
+  return runAction(async () => {
+    const user = await requirePermission("settings.manage");
+    const next = newLocationSchema.parse({
+      name: str(fd, "name") ?? "",
+      role: str(fd, "role") ?? "",
+      address: str(fd, "address"),
+      phone: str(fd, "phone"),
+      isCustomerFacing: fd.get("isCustomerFacing") === "on",
+    });
+    await db.transaction(async (tx) => {
+      const existing = await tx.select({ code: locations.code, name: locations.name }).from(locations).where(eq(locations.tenantId, user.tenantId));
+      if (existing.some((l) => l.name.toLowerCase() === next.name.toLowerCase())) throw new UserError(`There's already a location called ${next.name}.`);
+      // Short internal code: "North Side" → NORTH_SIDE (unique within this shop).
+      const base = next.name.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 20) || "LOCATION";
+      const codes = new Set(existing.map((l) => l.code));
+      let code = base;
+      for (let i = 2; codes.has(code); i++) code = `${base}_${i}`;
+      const [{ last }] = await tx.select({ last: max(locations.sortOrder) }).from(locations).where(eq(locations.tenantId, user.tenantId));
+      const [row] = await tx
+        .insert(locations)
+        .values({ tenantId: user.tenantId, code, ...next, role: next.role, sortOrder: (last ?? 0) + 1 })
+        .returning({ id: locations.id });
+      await logActivity(
+        { tenantId: user.tenantId, action: "setting.updated", entityType: "setting", entityId: row!.id, actorId: user.id, summary: `Added location ${next.name}`, data: { key: "location", after: next } },
+        tx,
+      );
+    });
+    revalidatePath("/", "layout");
+  }, "Location added");
 }
 
 const daysSchema = z.number().int().min(1, "Days must be at least 1.").max(365, "Days can't be more than 365.").nullable();
@@ -179,13 +258,13 @@ export async function saveAutomations(_prev: Prev, fd: FormData): Promise<Action
       proofReminderDays: days("proofReminderDays"),
       invoiceReminderDays: days("invoiceReminderDays"),
     };
-    const { automations } = await getSettings();
+    const { automations } = await getSettings(user.tenantId);
     const changes = diff(automations, next);
     if (!changes) return;
     await db.transaction(async (tx) => {
-      await saveSetting("automations", next, user.id, tx);
+      await saveSetting(user.tenantId, "automations", next, user.id, tx);
       await logActivity(
-        { action: "setting.updated", entityType: "setting", actorId: user.id, summary: "Updated customer message automations", data: { key: "automations", ...changes } },
+        { tenantId: user.tenantId, action: "setting.updated", entityType: "setting", actorId: user.id, summary: "Updated customer message automations", data: { key: "automations", ...changes } },
         tx,
       );
     });

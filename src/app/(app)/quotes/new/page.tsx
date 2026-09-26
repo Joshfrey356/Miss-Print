@@ -9,7 +9,7 @@ export const metadata = { title: "New Quote" };
 export default async function NewQuotePage({ searchParams }: { searchParams: Promise<{ customerId?: string }> }) {
   const user = await requirePagePermission("quotes.edit");
   const { customerId } = await searchParams;
-  const [opts, customer] = await Promise.all([builderOptions(), customerId ? pickedCustomer(Number(customerId)) : Promise.resolve(null)]);
+  const [opts, customer] = await Promise.all([builderOptions(user.tenantId), customerId ? pickedCustomer(user.tenantId, Number(customerId)) : Promise.resolve(null)]);
   return (
     <>
       <PageHeader title="New quote" back={{ href: "/quotes", label: "Quotes" }} subtitle="Pick the customer and product — the recommended price appears as you type. You always set the final price." />

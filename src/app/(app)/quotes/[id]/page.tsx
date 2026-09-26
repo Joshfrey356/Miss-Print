@@ -19,7 +19,7 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
   const user = await requirePagePermission("quotes.view");
   const id = Number((await params).id);
   if (!id) notFound();
-  const d = await getQuoteDetail(id);
+  const d = await getQuoteDetail(user.tenantId, id);
   if (!d) notFound();
   const { quote: q } = d;
   const showMoney = can(user.role, "financials.view");

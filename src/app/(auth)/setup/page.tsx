@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { Logo } from "@/components/logo";
 import { getSetupState } from "@/lib/setup";
+import { PLATFORM_NAME } from "@/lib/brand";
 import { SetupForm } from "./setup-form";
 
 export const metadata = { title: "Set up" };
@@ -14,8 +15,8 @@ export default async function SetupPage() {
     <main className="flex min-h-dvh items-center justify-center bg-slate-50 px-4 py-12">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center text-center">
-          <Logo className="scale-150" />
-          <p className="mt-8 text-sm font-medium uppercase tracking-[0.18em] text-slate-500">Command Center · First-time setup</p>
+          <Logo brand={null} fallbackName={PLATFORM_NAME} className="scale-150" />
+          <p className="mt-8 text-sm font-medium uppercase tracking-[0.18em] text-slate-500">First-time setup</p>
         </div>
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           {state === "db_error" ? (
@@ -24,12 +25,11 @@ export default async function SetupPage() {
             </p>
           ) : (
             <p className="mb-4 text-sm text-slate-600">
-              The database is connected and empty. Create the owner account — this also loads the two locations, starter pricing, vendors and materials. This page closes for good once the owner exists.
+              The database is connected and empty. Create your shop and its owner account — this also loads a starter location, pricing, vendors and materials you can change later in Settings. This page closes for good once the owner exists.
             </p>
           )}
           <SetupForm />
         </div>
-        <p className="mt-6 text-center text-xs text-slate-400">Miss Print · Munster & Hammond, Indiana · Since 1986</p>
       </div>
     </main>
   );

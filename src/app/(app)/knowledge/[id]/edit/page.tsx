@@ -1,5 +1,5 @@
 import { notFound, redirect } from "next/navigation";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { knowledgeArticles } from "@/lib/db/schema";
@@ -18,12 +18,12 @@ export default async function EditArticlePage({ params }: { params: Promise<{ id
   const [a] = await db
     .select({ id: knowledgeArticles.id, title: knowledgeArticles.title, category: knowledgeArticles.category, body: knowledgeArticles.body })
     .from(knowledgeArticles)
-    .where(eq(knowledgeArticles.id, id));
+    .where(and(eq(knowledgeArticles.tenantId, user.tenantId), eq(knowledgeArticles.id, id)));
   if (!a) notFound();
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader title={`Edit: ${a.title}`} back={{ href: `/knowledge/${a.id}`, label: "Back to article" }} />
-      <ArticleForm article={a} categories={await getKnowledgeCategories()} />
+      <ArticleForm article={a} categories={await getKnowledgeCategories(user.tenantId)} />
     </div>
   );
 }

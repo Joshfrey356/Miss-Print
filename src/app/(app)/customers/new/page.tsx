@@ -8,8 +8,8 @@ import { CustomerForm } from "../_components/customer-form";
 export const metadata = { title: "New customer" };
 
 export default async function NewCustomerPage() {
-  await requirePagePermission("customers.edit");
-  const salespeople = await getSalespeople();
+  const user = await requirePagePermission("customers.edit");
+  const salespeople = await getSalespeople(user.tenantId);
   return (
     <>
       <PageHeader title="New customer" back={{ href: "/customers", label: "Customers" }} />

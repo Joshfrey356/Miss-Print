@@ -122,11 +122,11 @@ export function storage(): StorageProvider {
   return instance;
 }
 
-/** Random, unguessable key that keeps the extension. */
-export function newStorageKey(filename: string) {
+/** Random, unguessable key that keeps the extension, filed under the shop it belongs to. */
+export function newStorageKey(tenantId: number, filename: string) {
   const ext = path.extname(filename).toLowerCase().replace(/[^.a-z0-9]/g, "").slice(0, 10);
   const d = new Date();
-  return `${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, "0")}/${randomBytes(16).toString("hex")}${ext}`;
+  return `t${tenantId}/${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, "0")}/${randomBytes(16).toString("hex")}${ext}`;
 }
 
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;

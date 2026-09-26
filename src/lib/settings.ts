@@ -1,7 +1,9 @@
 import "server-only";
 import { cache } from "react";
 import { db } from "@/lib/db";
+import { eq } from "drizzle-orm";
 import { companySettings } from "@/lib/db/schema";
+import { getTenant } from "@/lib/tenant";
 import { DEFAULT_BUSINESS_RULES, type BusinessRules } from "@/lib/pricing/engine";
 
 export type CompanyProfile = {
@@ -14,15 +16,8 @@ export type CompanyProfile = {
   hours: string;
 };
 
-export const DEFAULT_COMPANY: CompanyProfile = {
-  name: "Miss Print",
-  tagline: "Print · Design · Signs",
-  phone: "219-836-2517",
-  email: "orders@missprintusa.com",
-  website: "https://missprintusa.com",
-  address: "8244 Calumet Ave, Munster, IN 46321",
-  hours: "Mon–Fri 8:30–5:00 · Sat 9:00–12:00",
-};
+/** A shop's company profile before they fill it in (the name always comes from the shop itself). */
+export const DEFAULT_COMPANY: CompanyProfile = { name: "", tagline: "", phone: "", email: "", website: "", address: "", hours: "" };
 
 /** Optional customer-communication automations. All OFF by default (Phase 2 runs them). */
 export type AutomationSettings = {
@@ -42,11 +37,12 @@ export const DEFAULT_AUTOMATIONS: AutomationSettings = {
   enabled: false,
 };
 
-export const getSettings = cache(async () => {
-  const rows = await db.select().from(companySettings);
+/** One shop's settings. The company name always comes from the shop itself (tenants.name). */
+export const getSettings = cache(async (tenantId: number) => {
+  const [rows, tenant] = await Promise.all([db.select().from(companySettings).where(eq(companySettings.tenantId, tenantId)), getTenant(tenantId)]);
   const map = Object.fromEntries(rows.map((r) => [r.key, r.value]));
   return {
-    company: { ...DEFAULT_COMPANY, ...(map.company as Partial<CompanyProfile>) },
+    company: { ...DEFAULT_COMPANY, ...(map.company as Partial<CompanyProfile>), ...(tenant ? { name: tenant.name } : {}) },
     rules: { ...DEFAULT_BUSINESS_RULES, ...(map.business_rules as Partial<BusinessRules>) },
     automations: { ...DEFAULT_AUTOMATIONS, ...(map.automations as Partial<AutomationSettings>) },
     quoteValidDays: (map.quote_valid_days as number) ?? 30,

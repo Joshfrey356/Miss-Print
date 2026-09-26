@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { locations, users } from "@/lib/db/schema";
@@ -15,7 +15,7 @@ export default async function ProfilePage() {
     .select({ name: users.name, phone: users.phone, email: users.email, prefs: users.notificationPrefs, location: locations.name })
     .from(users)
     .leftJoin(locations, eq(locations.id, users.locationId))
-    .where(eq(users.id, me.id));
+    .where(and(eq(users.tenantId, me.tenantId), eq(users.id, me.id)));
   const kinds = Object.entries(NOTIFICATION_KINDS).map(([key, label]) => ({ key, label, on: row?.prefs?.[key] !== false }));
   return (
     <SettingsPage

@@ -16,14 +16,14 @@ export const metadata = { title: "Price Lookup" };
 export default async function LookupPage({ searchParams }: { searchParams: Promise<{ q?: string; category?: string }> }) {
   const user = await requirePagePermission("quotes.view");
   const { q = "", category } = await searchParams;
-  const cats = await getCategories();
+  const cats = await getCategories(user.tenantId);
   const parsed = parseLookup(q);
   // Match a category by name if the text mentions one ("banner", "business cards", "wrap")
   const words = parsed.text.toLowerCase();
   const byText = cats.find((c) => words && (words.includes(c.name.toLowerCase().replace(/s$/, "")) || words.includes(c.slug.replace(/-/g, " ").replace(/s$/, ""))));
   const categoryId = category ? Number(category) : (byText?.id ?? null);
   const showMoney = can(user.role, "financials.view");
-  const result = q || category ? await findSimilarJobs({ ...parsed, categoryId, text: parsed.text || null, limit: 50 }) : null;
+  const result = q || category ? await findSimilarJobs(user.tenantId, { ...parsed, categoryId, text: parsed.text || null, limit: 50 }) : null;
 
   return (
     <>

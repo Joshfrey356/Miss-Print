@@ -1,10 +1,11 @@
 import type { Metadata, Viewport } from "next";
 import { Toaster } from "sonner";
+import { PLATFORM_NAME } from "@/lib/brand";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: { default: "Miss Print Command Center", template: "%s · Miss Print" },
-  description: "Internal operations for Miss Print — Print · Design · Signs",
+  title: { default: PLATFORM_NAME, template: `%s · ${PLATFORM_NAME}` },
+  description: "Operations for print, sign and design shops: jobs, quotes, proofs, production and money.",
   robots: { index: false, follow: false },
 };
 

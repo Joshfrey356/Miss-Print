@@ -42,19 +42,28 @@ export async function saveEvent(formData: FormData): Promise<ActionResult<{ id: 
     const jobRaw = str(formData, "jobNumber");
     if (jobRaw) {
       const n = parseJobNumber(jobRaw);
-      const [j] = n ? await db.select({ id: jobs.id, customerId: jobs.customerId }).from(jobs).where(and(eq(jobs.number, n), isNull(jobs.archivedAt))) : [];
+      const [j] = n ? await db
+            .select({ id: jobs.id, customerId: jobs.customerId })
+            .from(jobs)
+            .where(and(eq(jobs.tenantId, user.tenantId), eq(jobs.number, n), isNull(jobs.archivedAt))) : [];
       if (!j) throw new UserError(`There's no job ${jobRaw}. Check the number, or leave it blank.`);
       jobId = j.id;
       customerId = j.customerId;
     }
     let locationId = int(formData, "locationId");
     if (locationId) {
-      const [l] = await db.select({ id: locations.id }).from(locations).where(eq(locations.id, locationId));
+      const [l] = await db
+        .select({ id: locations.id })
+        .from(locations)
+        .where(and(eq(locations.tenantId, user.tenantId), eq(locations.id, locationId)));
       locationId = l?.id ?? null;
     }
     let userId = int(formData, "userId");
     if (userId) {
-      const [u] = await db.select({ id: users.id }).from(users).where(eq(users.id, userId));
+      const [u] = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(and(eq(users.tenantId, user.tenantId), eq(users.id, userId)));
       userId = u?.id ?? null;
     }
     const values = { title, type, startsAt, endsAt, allDay, jobId, locationId, userId, notes: str(formData, "notes") };
@@ -64,15 +73,15 @@ export async function saveEvent(formData: FormData): Promise<ActionResult<{ id: 
         const [row] = await tx
           .update(calendarEvents)
           .set(values)
-          .where(and(eq(calendarEvents.id, id), isNull(calendarEvents.archivedAt)))
+          .where(and(eq(calendarEvents.tenantId, user.tenantId), eq(calendarEvents.id, id), isNull(calendarEvents.archivedAt)))
           .returning({ id: calendarEvents.id });
         if (!row) throw new UserError("That event was not found. It may have been removed.");
         return row.id;
       }
-      const [row] = await tx.insert(calendarEvents).values({ ...values, createdBy: user.id }).returning({ id: calendarEvents.id });
+      const [row] = await tx.insert(calendarEvents).values({ ...values, tenantId: user.tenantId, createdBy: user.id }).returning({ id: calendarEvents.id });
       if (jobId)
         await logActivity(
-          { action: "calendar.event_added", entityType: "job", entityId: jobId, jobId, customerId, actorId: user.id, summary: `Added “${title}” to the calendar`, data: { date, startTime: allDay ? null : startTime } },
+          { tenantId: user.tenantId, action: "calendar.event_added", entityType: "job", entityId: jobId, jobId, customerId, actorId: user.id, summary: `Added “${title}” to the calendar`, data: { date, startTime: allDay ? null : startTime } },
           tx,
         );
       return row!.id;
@@ -85,8 +94,11 @@ export async function saveEvent(formData: FormData): Promise<ActionResult<{ id: 
 /** Remove an event from the calendar (archived). */
 export async function archiveEvent(id: number): Promise<ActionResult> {
   return runAction(async () => {
-    await requirePermission("calendar.edit");
-    await db.update(calendarEvents).set({ archivedAt: new Date() }).where(eq(calendarEvents.id, id));
+    const user = await requirePermission("calendar.edit");
+    await db
+      .update(calendarEvents)
+      .set({ archivedAt: new Date() })
+      .where(and(eq(calendarEvents.tenantId, user.tenantId), eq(calendarEvents.id, id)));
     refresh();
   }, "Event removed");
 }

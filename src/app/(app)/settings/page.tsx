@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Building2, ChevronRight, Mail, MapPin, Plug, Scale, SlidersHorizontal, Tags, UserCog } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { requirePagePermission } from "@/lib/auth";
+import { getSettings } from "@/lib/settings";
 import { PageHeader } from "@/components/ui/page-header";
 
 export const metadata = { title: "Settings" };
@@ -25,7 +26,7 @@ const CARDS: { href: string; title: string; text: string; icon: LucideIcon }[] =
     text: "Add people, reset passwords, and see what each role is allowed to see.",
     icon: UserCog,
   },
-  { href: "/settings/locations", title: "Locations", text: "Munster, Hammond and off-site: names, addresses and phone numbers.", icon: MapPin },
+  { href: "/settings/locations", title: "Locations", text: "Your shops and work sites: names, addresses and phone numbers.", icon: MapPin },
   {
     href: "/settings/company",
     title: "Company Profile",
@@ -42,10 +43,11 @@ const CARDS: { href: string; title: string; text: string; icon: LucideIcon }[] =
 ];
 
 export default async function SettingsPage() {
-  await requirePagePermission("settings.manage");
+  const user = await requirePagePermission("settings.manage");
+  const { company } = await getSettings(user.tenantId);
   return (
     <div className="mx-auto max-w-5xl">
-      <PageHeader title="Settings" subtitle="How Miss Print runs: rules, prices, people and places." />
+      <PageHeader title="Settings" subtitle={`How ${company.name || "your business"} runs: rules, prices, people and places.`} />
       <div className="grid gap-4 sm:grid-cols-2">
         {CARDS.map((c) => (
           <Link

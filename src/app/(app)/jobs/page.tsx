@@ -32,8 +32,8 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
   const [{ rows, total, page, pageSize }, counts, people, locations] = await Promise.all([
     listJobs({ ...sp, view, assignee: sp.assignee ? Number(sp.assignee) : undefined, page: Number(sp.page) || 1 }, user),
     jobViewCounts(user),
-    getActiveUsers(),
-    getLocations(),
+    getActiveUsers(user.tenantId),
+    getLocations(user.tenantId),
   ]);
   const showMoney = can(user.role, "financials.view");
   const params = { q: sp.q, view: sp.view, location: sp.location, assignee: sp.assignee, sort: sp.sort, dir: sp.dir };
@@ -124,7 +124,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
                       <OwnerTag name={j.owner} color={j.ownerColor} />
                     </Td>
                     <Td className="hidden lg:table-cell">
-                      <LocationTag code={j.locationCode} name={j.locationName} />
+                      <LocationTag name={j.locationName} index={j.locationIndex} />
                     </Td>
                     {showMoney && <Td className="tabular text-right">{money(j.totalCents)}</Td>}
                   </Tr>

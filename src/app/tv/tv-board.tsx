@@ -2,9 +2,11 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { JobCardView, sortCards, type BoardCard } from "@/components/jobs/job-card";
+import { Logo, type LogoBrand } from "@/components/logo";
 import { cn } from "@/lib/utils";
 
-type Props = { location: string | null; dueToday: BoardCard[]; rush: BoardCard[]; printing: BoardCard[]; upNext: BoardCard[]; installs: BoardCard[]; ready: BoardCard[] };
+/** `location` is the name of the location shown (from ?location=<code>), or null for all. */
+type Props = { brand: LogoBrand; location: string | null; dueToday: BoardCard[]; rush: BoardCard[]; printing: BoardCard[]; upNext: BoardCard[]; installs: BoardCard[]; ready: BoardCard[] };
 
 export function TvBoard(p: Props) {
   const router = useRouter();
@@ -32,8 +34,8 @@ export function TvBoard(p: Props) {
     <div className="min-h-dvh bg-slate-900 p-6 text-white">
       <header className="mb-6 flex items-center justify-between">
         <div className="flex items-baseline gap-4">
-          <span className="text-3xl font-black tracking-tight text-brand-400">MISS PRINT</span>
-          <span className="text-xl font-medium text-slate-300">Production{p.location ? ` · ${p.location[0] + p.location.slice(1).toLowerCase()}` : ""}</span>
+          <Logo brand={p.brand} inverted className="self-center" />
+          <span className="text-xl font-medium text-slate-300">Production{p.location ? ` · ${p.location}` : ""}</span>
         </div>
         <div className="text-right">
           <p className="tabular text-4xl font-semibold">{now ? now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" }) : ""}</p>

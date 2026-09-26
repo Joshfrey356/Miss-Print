@@ -1,6 +1,8 @@
+import type { Metadata } from "next";
 import { and, count, eq, isNull } from "drizzle-orm";
 import Link from "next/link";
-import { requireUser } from "@/lib/auth";
+import { getCurrentUser, requireUser } from "@/lib/auth";
+import { getBrand, PLATFORM_NAME } from "@/lib/brand";
 import { db } from "@/lib/db";
 import { notifications } from "@/lib/db/schema";
 import { can, ROLE_LABELS } from "@/lib/permissions";
@@ -11,8 +13,21 @@ import { SearchButton } from "@/components/shell/command-palette";
 import { NotificationBell } from "@/components/shell/notification-bell";
 import { UserMenu } from "@/components/shell/user-menu";
 
+/** White-label the browser tab: "<page> · <shop name>", with the shop's logo as the icon. */
+export async function generateMetadata(): Promise<Metadata> {
+  const user = await getCurrentUser();
+  if (!user) return {};
+  const brand = await getBrand(user.tenantId);
+  return {
+    title: { default: `${brand.name} Command Center`, template: `%s · ${brand.name}` },
+    description: `${PLATFORM_NAME} for ${brand.name}`,
+    icons: { icon: `/brand/${brand.tenantId}/icon?v=${encodeURIComponent(brand.logoUrl ?? brand.name)}` },
+  };
+}
+
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser();
+  const brand = await getBrand(user.tenantId);
   const r = user.role;
   const allowed: NavKey[] = ["dashboard"];
   if (can(r, "jobs.view")) allowed.push("jobs");
@@ -31,14 +46,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const [{ unread }] = await db
     .select({ unread: count() })
     .from(notifications)
-    .where(and(eq(notifications.userId, user.id), isNull(notifications.readAt)));
+    .where(and(eq(notifications.tenantId, user.tenantId), eq(notifications.userId, user.id), isNull(notifications.readAt)));
 
   return (
     <div className="min-h-dvh lg:pl-64 print:!pl-0">
       {/* Desktop sidebar */}
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 print:!hidden flex-col border-r border-slate-200 bg-white lg:flex">
         <Link href="/dashboard" className="px-6 pb-5 pt-6">
-          <Logo />
+          <Logo brand={brand} />
         </Link>
         <div className="flex-1 overflow-y-auto px-3">
           <SidebarNav allowed={allowed} />
@@ -52,7 +67,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <header className="sticky top-0 z-20 print:hidden border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="flex h-16 items-center gap-3 px-4 lg:px-8">
           <Link href="/dashboard" className="lg:hidden">
-            <Logo compact />
+            <Logo brand={brand} compact />
           </Link>
           <div className="hidden flex-1 lg:block">
             <SearchButton />

@@ -10,8 +10,8 @@ import { marginOf } from "@/lib/pricing/engine";
 import { CreateInvoiceButton } from "./client";
 import { Num, StatCard } from "./parts";
 
-export async function OverviewTab({ canEdit, canMargins }: { canEdit: boolean; canMargins: boolean }) {
-  const o = await getOverview();
+export async function OverviewTab({ tenantId, canEdit, canMargins }: { tenantId: number; canEdit: boolean; canMargins: boolean }) {
+  const o = await getOverview(tenantId);
   const month = monthLabel(o.ym);
   const maxBar = Math.max(1, ...o.months.flatMap((m) => [m.revenue, m.expenses]));
   const gpMargin = marginOf(o.sales, o.jobCost + o.laborCost);

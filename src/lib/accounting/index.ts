@@ -6,16 +6,17 @@ import "server-only";
  * Miss Print Command Center owns OPERATIONAL data (jobs, quotes, production, job costing).
  * QuickBooks (if used) remains the AUTHORITATIVE accounting system. A provider syncs
  * customers, invoices, payments (and optionally expenses) and stores the remote id in
- * each record's `external_id` column.
+ * each record's `external_id` column. Each shop (tenant) connects its own books, so every
+ * call names the shop.
  */
 export type SyncResult = { ok: boolean; externalId?: string; error?: string };
 
 export interface AccountingProvider {
   readonly name: string;
-  syncCustomer(customerId: number): Promise<SyncResult>;
-  syncInvoice(invoiceId: number): Promise<SyncResult>;
-  syncPayment(paymentId: number): Promise<SyncResult>;
-  syncExpense(expenseId: number): Promise<SyncResult>;
+  syncCustomer(tenantId: number, customerId: number): Promise<SyncResult>;
+  syncInvoice(tenantId: number, invoiceId: number): Promise<SyncResult>;
+  syncPayment(tenantId: number, paymentId: number): Promise<SyncResult>;
+  syncExpense(tenantId: number, expenseId: number): Promise<SyncResult>;
 }
 
 class NoAccounting implements AccountingProvider {

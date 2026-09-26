@@ -29,12 +29,13 @@ export type Row = Record<string, string | number | null>;
 export type ReportTable = { columns: Column[]; rows: Row[]; note?: string };
 export type Access = "basic" | "financial" | "margins";
 export type TabKey = "revenue" | "profit" | "operations" | "sales" | "customers";
-export type ReportCtx = { financial: boolean; margins: boolean; laborRateCents: number; targetMarginPct: number };
+export type ReportCtx = { tenantId: number; financial: boolean; margins: boolean; laborRateCents: number; targetMarginPct: number };
 
 /** What this person may see in Reports. Money needs reports.financial or margins.view; costs need margins.view. */
-export async function getReportCtx(role: Role): Promise<ReportCtx> {
-  const { rules } = await getSettings();
+export async function getReportCtx(tenantId: number, role: Role): Promise<ReportCtx> {
+  const { rules } = await getSettings(tenantId);
   return {
+    tenantId,
     financial: can(role, "reports.financial") || can(role, "margins.view"),
     margins: can(role, "margins.view"),
     laborRateCents: rules.laborCostPerHourCents,
@@ -43,7 +44,7 @@ export async function getReportCtx(role: Role): Promise<ReportCtx> {
 }
 
 /** Several profit reports share one query per request. */
-export const jobProfitsFor = cache((from: string, to: string, laborRateCents: number) => q.jobProfits({ from, to }, laborRateCents));
+export const jobProfitsFor = cache((tenantId: number, from: string, to: string, laborRateCents: number) => q.jobProfits(tenantId, { from, to }, laborRateCents));
 
 export type ReportDef = {
   title: string;
@@ -110,8 +111,8 @@ export const REPORTS = {
     access: "financial",
     monthly: { valueKey: "cents" },
     empty: "No invoices in this period.",
-    async build(r) {
-      const data = await q.revenueByMonth(r);
+    async build(r, ctx) {
+      const data = await q.revenueByMonth(ctx.tenantId, r);
       const by = new Map(data.map((d) => [d.month, d]));
       return {
         columns: [
@@ -130,7 +131,7 @@ export const REPORTS = {
     access: "financial",
     bar: "cents",
     empty: "No invoices in this period.",
-    build: async (r) => bucketTable("Product category", await q.revenueByCategory(r)),
+    build: async (r, ctx) => bucketTable("Product category", await q.revenueByCategory(ctx.tenantId, r)),
   },
   revenue_customer: {
     title: "Top 10 customers",
@@ -139,7 +140,7 @@ export const REPORTS = {
     access: "financial",
     bar: "cents",
     empty: "No invoices in this period.",
-    build: async (r) => bucketTable("Customer", await q.revenueByCustomer(r), (b) => `/customers/${b.id}`),
+    build: async (r, ctx) => bucketTable("Customer", await q.revenueByCustomer(ctx.tenantId, r), (b) => `/customers/${b.id}`),
   },
   revenue_salesperson: {
     title: "Revenue by salesperson",
@@ -148,7 +149,7 @@ export const REPORTS = {
     access: "financial",
     bar: "cents",
     empty: "No invoices in this period.",
-    build: async (r) => bucketTable("Salesperson", await q.revenueBySalesperson(r)),
+    build: async (r, ctx) => bucketTable("Salesperson", await q.revenueBySalesperson(ctx.tenantId, r)),
   },
   revenue_location: {
     title: "Revenue by location",
@@ -157,7 +158,7 @@ export const REPORTS = {
     access: "financial",
     bar: "cents",
     empty: "No invoices in this period.",
-    build: async (r) => bucketTable("Location", await q.revenueByLocation(r)),
+    build: async (r, ctx) => bucketTable("Location", await q.revenueByLocation(ctx.tenantId, r)),
   },
 
   // ---------------------------------------------------------------- Profit
@@ -168,7 +169,7 @@ export const REPORTS = {
     access: "margins",
     empty: "No invoiced jobs in this period.",
     async build(r, ctx) {
-      const list = await jobProfitsFor(r.from, r.to, ctx.laborRateCents);
+      const list = await jobProfitsFor(ctx.tenantId, r.from, r.to, ctx.laborRateCents);
       return {
         columns: profitColumns("Product category", false),
         rows: profitGroups(list, (j) => j.category).map((g) => ({ ...g, profit: g.revenue - g.cost, margin: marginOf(g.revenue, g.cost) })),
@@ -183,7 +184,7 @@ export const REPORTS = {
     access: "margins",
     empty: "No invoiced jobs in this period.",
     async build(r, ctx) {
-      const list = await jobProfitsFor(r.from, r.to, ctx.laborRateCents);
+      const list = await jobProfitsFor(ctx.tenantId, r.from, r.to, ctx.laborRateCents);
       return {
         columns: profitColumns("Customer", true),
         rows: profitGroups(list, (j) => j.customer, (j) => `/customers/${j.customerId}`)
@@ -199,7 +200,7 @@ export const REPORTS = {
     access: "margins",
     empty: "No invoiced jobs with costs recorded in this period.",
     async build(r, ctx) {
-      const list = (await jobProfitsFor(r.from, r.to, ctx.laborRateCents))
+      const list = (await jobProfitsFor(ctx.tenantId, r.from, r.to, ctx.laborRateCents))
         .filter((j) => j.costCents > 0 && j.revenueCents > 0)
         .map((j) => ({ ...j, margin: marginOf(j.revenueCents, j.costCents) ?? 0 }))
         .sort((a, b) => a.margin - b.margin)
@@ -234,8 +235,8 @@ export const REPORTS = {
     access: "basic",
     monthly: { valueKey: "count" },
     empty: "No jobs were completed in this period.",
-    async build(r) {
-      const data = await q.jobsCompletedByMonth(r);
+    async build(r, ctx) {
+      const data = await q.jobsCompletedByMonth(ctx.tenantId, r);
       const by = new Map(data.map((d) => [d.month, d.count]));
       return {
         columns: [
@@ -253,8 +254,8 @@ export const REPORTS = {
     access: "basic",
     bar: "avgDays",
     empty: "No jobs were completed in this period.",
-    async build(r) {
-      const data = await q.turnaroundByCategory(r);
+    async build(r, ctx) {
+      const data = await q.turnaroundByCategory(ctx.tenantId, r);
       return {
         columns: [
           { key: "label", label: "Product category", kind: "text" },
@@ -272,8 +273,8 @@ export const REPORTS = {
     tab: "operations",
     access: "basic",
     empty: "Nothing is overdue. Nice work.",
-    async build() {
-      const { list } = await q.overdueJobs(50);
+    async build(_r, ctx) {
+      const { list } = await q.overdueJobs(ctx.tenantId, 50);
       return {
         columns: [
           { key: "job", label: "Job", kind: "text", href: "href" },
@@ -301,8 +302,8 @@ export const REPORTS = {
     tab: "operations",
     access: "basic",
     empty: "No proofs are waiting on a customer.",
-    async build() {
-      const list = await q.outstandingProofs();
+    async build(_r, ctx) {
+      const list = await q.outstandingProofs(ctx.tenantId);
       return {
         columns: [
           { key: "job", label: "Job", kind: "text", href: "href" },
@@ -332,8 +333,8 @@ export const REPORTS = {
     tab: "sales",
     access: "basic",
     empty: "No quotes were created in this period.",
-    async build(r) {
-      const data = await q.quotesBySalesperson(r);
+    async build(r, ctx) {
+      const data = await q.quotesBySalesperson(ctx.tenantId, r);
       return {
         columns: [
           { key: "label", label: "Salesperson", kind: "text" },
@@ -354,8 +355,8 @@ export const REPORTS = {
     access: "basic",
     bar: "count",
     empty: "No quotes were lost in this period.",
-    async build(r) {
-      const data = await q.lostReasons(r);
+    async build(r, ctx) {
+      const data = await q.lostReasons(ctx.tenantId, r);
       return {
         columns: [
           { key: "label", label: "Reason", kind: "text" },
@@ -375,7 +376,7 @@ export const REPORTS = {
     access: "basic",
     empty: "No customer activity in this period.",
     async build(r, ctx) {
-      const data = await q.topCustomers(r, ctx.financial);
+      const data = await q.topCustomers(ctx.tenantId, r, ctx.financial);
       return {
         columns: [
           { key: "name", label: "Customer", kind: "text", href: "href" },
@@ -393,7 +394,7 @@ export const REPORTS = {
     access: "basic",
     empty: "Every past customer has ordered in the last 6 months.",
     async build(_r, ctx) {
-      const data = await q.inactiveCustomers(50);
+      const data = await q.inactiveCustomers(ctx.tenantId, 50);
       return {
         columns: [
           { key: "name", label: "Customer", kind: "text", href: "href" },

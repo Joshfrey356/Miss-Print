@@ -20,14 +20,14 @@ export default async function TasksPage({ searchParams }: { searchParams: SP }) 
   const tab = typeof sp.tab === "string" && tabKeys.includes(sp.tab) ? sp.tab : "mine";
 
   const [users, mine, list] = await Promise.all([
-    getActiveUsers(),
-    getMyTasks(user.id),
+    getActiveUsers(user.tenantId),
+    getMyTasks(user.tenantId, user.id),
     tab === "assigned"
-      ? getTasksAssignedBy(user.id)
+      ? getTasksAssignedBy(user.tenantId, user.id)
       : tab === "all"
-        ? getAllOpenTasks()
+        ? getAllOpenTasks(user.tenantId)
         : tab === "done"
-          ? getCompletedTasks(user.id, isManager)
+          ? getCompletedTasks(user.tenantId, user.id, isManager)
           : null,
   ]);
   const tasks = list ?? mine;

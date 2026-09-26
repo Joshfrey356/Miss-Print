@@ -17,10 +17,10 @@ export default async function EditExpensePage({ params, searchParams }: { params
   const { id } = await params;
   const sp = await searchParams;
   if (!/^\d+$/.test(id)) notFound();
-  const row = await getExpense(Number(id));
+  const row = await getExpense(user.tenantId, Number(id));
   if (!row) notFound();
   const { e } = row;
-  const vendors = await getVendorSuggestions();
+  const vendors = await getVendorSuggestions(user.tenantId);
   const fromJob = sp.from === "job" && row.jobNumber != null;
   const listHref = can(user.role, "money.view") ? "/money?tab=expenses" : "/dashboard";
   const cancelHref = fromJob ? `/jobs/${row.jobNumber}?tab=money` : listHref;

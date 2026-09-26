@@ -41,17 +41,17 @@ export default async function DashboardPage() {
   const showMoneyCards = money$ && (can(r, "money.view") || r === "manager");
 
   const [counts, tasks, people, msgs, queue, late, cards, revenue, byCat, win, completed] = await Promise.all([
-    todayCounts(),
-    getMyTasks(user.id),
-    getActiveUsers(),
-    can(r, "messages.use") ? importantMessages(user.id) : Promise.resolve([]),
-    company ? Promise.resolve([]) : myQueue(user.id, r),
-    company ? attentionJobs() : Promise.resolve([]),
-    showMoneyCards ? moneyCards() : Promise.resolve(null),
-    money$ ? revenueByMonth(12) : Promise.resolve([]),
-    money$ ? salesByCategory(90) : Promise.resolve([]),
-    company && can(r, "quotes.view") ? quoteWinRate(90) : Promise.resolve(null),
-    company ? jobsCompletedByMonth(6) : Promise.resolve([]),
+    todayCounts(user.tenantId),
+    getMyTasks(user.tenantId, user.id),
+    getActiveUsers(user.tenantId),
+    can(r, "messages.use") ? importantMessages(user.tenantId, user.id) : Promise.resolve([]),
+    company ? Promise.resolve([]) : myQueue(user.tenantId, user.id, r),
+    company ? attentionJobs(user.tenantId) : Promise.resolve([]),
+    showMoneyCards ? moneyCards(user.tenantId) : Promise.resolve(null),
+    money$ ? revenueByMonth(user.tenantId, 12) : Promise.resolve([]),
+    money$ ? salesByCategory(user.tenantId, 90) : Promise.resolve([]),
+    company && can(r, "quotes.view") ? quoteWinRate(user.tenantId, 90) : Promise.resolve(null),
+    company ? jobsCompletedByMonth(user.tenantId, 6) : Promise.resolve([]),
   ]);
 
   // ---------------- Needs attention (actionable) ----------------

@@ -1,5 +1,5 @@
 import "server-only";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { customers, materials, pricingRules, productCategories } from "@/lib/db/schema";
 import { getSettings } from "@/lib/settings";
@@ -11,27 +11,27 @@ export type ItemPricingRequest = Omit<PricingInput, "materialCostCents" | "disco
   customerId?: number | null;
 };
 
-export async function getCategoryConfig(categoryId: number | null): Promise<PricingConfig> {
+export async function getCategoryConfig(tenantId: number, categoryId: number | null): Promise<PricingConfig> {
   if (!categoryId) return { method: "custom" };
   const [row] = await db
     .select({ config: pricingRules.config, method: productCategories.pricingMethod })
     .from(productCategories)
-    .leftJoin(pricingRules, eq(pricingRules.categoryId, productCategories.id))
-    .where(eq(productCategories.id, categoryId));
+    .leftJoin(pricingRules, and(eq(pricingRules.categoryId, productCategories.id), eq(pricingRules.tenantId, tenantId)))
+    .where(and(eq(productCategories.tenantId, tenantId), eq(productCategories.id, categoryId)));
   return (row?.config as PricingConfig | null) ?? { method: row?.method ?? "custom" };
 }
 
 /** Price one line on the server (all costs stay server-side). */
-export async function priceItem(req: ItemPricingRequest): Promise<PricingResult> {
-  const [config, { rules }] = await Promise.all([getCategoryConfig(req.categoryId), getSettings()]);
+export async function priceItem(tenantId: number, req: ItemPricingRequest): Promise<PricingResult> {
+  const [config, { rules }] = await Promise.all([getCategoryConfig(tenantId, req.categoryId), getSettings(tenantId)]);
   let materialCostCents: number | null = null;
   if (req.materialId) {
-    const [m] = await db.select({ cost: materials.costCents, unit: materials.unit }).from(materials).where(eq(materials.id, req.materialId));
+    const [m] = await db.select({ cost: materials.costCents, unit: materials.unit }).from(materials).where(and(eq(materials.tenantId, tenantId), eq(materials.id, req.materialId)));
     if (m && (config.method !== "per_sqft" || m.unit === "sqft")) materialCostCents = m.cost;
   }
   let discountPct = 0;
   if (req.customerId) {
-    const [c] = await db.select({ d: customers.discountPct }).from(customers).where(eq(customers.id, req.customerId));
+    const [c] = await db.select({ d: customers.discountPct }).from(customers).where(and(eq(customers.tenantId, tenantId), eq(customers.id, req.customerId)));
     discountPct = c?.d ?? 0;
   }
   return calculatePrice(config, { ...req, materialCostCents, discountPct }, rules);

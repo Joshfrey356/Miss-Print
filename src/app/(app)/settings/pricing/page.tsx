@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { ChevronRight } from "lucide-react";
 import { requirePagePermission } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -15,7 +15,7 @@ import { AddCategoryButton } from "./add-category";
 export const metadata = { title: "Pricing Rules" };
 
 export default async function PricingPage() {
-  await requirePagePermission("pricing.edit");
+  const user = await requirePagePermission("pricing.edit");
   const rows = await db
     .select({
       id: productCategories.id,
@@ -28,8 +28,9 @@ export default async function PricingPage() {
       notes: pricingRules.notes,
     })
     .from(productCategories)
-    .leftJoin(pricingRules, eq(pricingRules.categoryId, productCategories.id))
+    .leftJoin(pricingRules, and(eq(pricingRules.categoryId, productCategories.id), eq(pricingRules.tenantId, user.tenantId)))
     .leftJoin(locations, eq(locations.id, productCategories.defaultLocationId))
+    .where(eq(productCategories.tenantId, user.tenantId))
     .orderBy(asc(productCategories.sortOrder), asc(productCategories.name));
 
   return (

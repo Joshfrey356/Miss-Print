@@ -9,11 +9,11 @@ import { CustomerForm } from "../../_components/customer-form";
 export const metadata = { title: "Edit customer" };
 
 export default async function EditCustomerPage({ params }: { params: Promise<{ id: string }> }) {
-  await requirePagePermission("customers.edit");
+  const user = await requirePagePermission("customers.edit");
   const id = Number((await params).id);
-  const customer = await getCustomer(id);
+  const customer = await getCustomer(user.tenantId, id);
   if (!customer) notFound();
-  const [contact, salespeople] = await Promise.all([getPrimaryContact(id), getSalespeople()]);
+  const [contact, salespeople] = await Promise.all([getPrimaryContact(user.tenantId, id), getSalespeople(user.tenantId)]);
   // Keep a no-longer-eligible salesperson selectable so saving doesn't silently drop them.
   const people = salespeople.map((u) => ({ id: u.id, name: u.name }));
   if (customer.salesperson && !people.some((p) => p.id === customer.salesperson!.id)) people.push({ id: customer.salesperson.id, name: customer.salesperson.name });

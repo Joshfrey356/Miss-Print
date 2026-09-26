@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Archive, Briefcase, ChevronLeft, FileText, Globe, Mail, MapPin, Pencil, Phone, Plus } from "lucide-react";
-import { requirePagePermission, userCan } from "@/lib/auth";
+import { getCurrentUser, requirePagePermission, userCan } from "@/lib/auth";
 import {
   getContacts,
   getCustomer,
@@ -29,7 +29,8 @@ const JOB_SORTS: CustomerJobSort[] = ["number", "title", "status", "due", "creat
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) || undefined;
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
-  const c = await getCustomer(Number((await params).id));
+  const [{ id }, user] = await Promise.all([params, getCurrentUser()]);
+  const c = user ? await getCustomer(user.tenantId, Number(id)) : null;
   return { title: c?.name ?? "Customer" };
 }
 
@@ -42,7 +43,7 @@ export default async function CustomerPage({
 }) {
   const user = await requirePagePermission("customers.view");
   const id = Number((await params).id);
-  const customer = await getCustomer(id);
+  const customer = await getCustomer(user.tenantId, id);
   if (!customer) notFound();
   const sp = await searchParams;
 
@@ -69,7 +70,7 @@ export default async function CustomerPage({
   const tabRaw = one(sp.tab) as Tab | undefined;
   const tab: Tab = tabs.some((t) => t.key === tabRaw && t.allowed) ? tabRaw! : "overview";
 
-  const [stats, counts] = await Promise.all([getCustomerStats(id, can.money), getCustomerCounts(id, { showMoney: can.invoices })]);
+  const [stats, counts] = await Promise.all([getCustomerStats(user.tenantId, id, can.money), getCustomerCounts(user.tenantId, id, { showMoney: can.invoices })]);
   const countFor: Partial<Record<Tab, number>> = { jobs: counts.jobs, quotes: counts.quotes, invoices: counts.invoices, files: counts.files, messages: counts.comms };
 
   const base = `/customers/${id}`;
@@ -209,9 +210,10 @@ export default async function CustomerPage({
           .map((t) => ({ key: t.key, label: t.label, href: t.key === "overview" ? base : `${base}?tab=${t.key}`, count: countFor[t.key] }))}
       />
 
-      {tab === "overview" && <Overview id={id} can={can} notes={customer.notes} billingAddress={customer.billingAddress} archived={archived} />}
+      {tab === "overview" && <Overview tenantId={user.tenantId} id={id} can={can} notes={customer.notes} billingAddress={customer.billingAddress} archived={archived} />}
       {tab === "jobs" && (
         <JobsTable
+          tenantId={user.tenantId}
           customerId={id}
           showMoney={can.money}
           canCreate={can.newJob && !archived}
@@ -220,10 +222,10 @@ export default async function CustomerPage({
           dir={one(sp.dir) === "asc" ? "asc" : "desc"}
         />
       )}
-      {tab === "quotes" && <QuotesTable customerId={id} showMoney={can.money} canCreate={can.newQuote && !archived} />}
-      {tab === "invoices" && <InvoicesTab customerId={id} />}
-      {tab === "files" && <FilesTab customerId={id} canUpload={can.upload} />}
-      {tab === "messages" && <MessagesTab customerId={id} canLog={can.edit} showMoney={can.invoices} showPrices={can.money} />}
+      {tab === "quotes" && <QuotesTable tenantId={user.tenantId} customerId={id} showMoney={can.money} canCreate={can.newQuote && !archived} />}
+      {tab === "invoices" && <InvoicesTab tenantId={user.tenantId} customerId={id} />}
+      {tab === "files" && <FilesTab tenantId={user.tenantId} customerId={id} canUpload={can.upload} />}
+      {tab === "messages" && <MessagesTab tenantId={user.tenantId} customerId={id} canLog={can.edit} showMoney={can.invoices} showPrices={can.money} />}
     </>
   );
 }
@@ -247,12 +249,14 @@ function Stat({ label, value, sub, tone, href }: { label: string; value: string;
 }
 
 async function Overview({
+  tenantId,
   id,
   can,
   notes,
   billingAddress,
   archived,
 }: {
+  tenantId: number;
   id: number;
   can: { money: boolean; cost: boolean; edit: boolean; quotes: boolean; newQuote: boolean; jobs: boolean; newJob: boolean };
   notes: string | null;
@@ -260,11 +264,11 @@ async function Overview({
   archived: boolean;
 }) {
   const [openJobs, pastJobs, openQuotes, contacts, activity] = await Promise.all([
-    can.jobs ? getCustomerJobs(id, { showMoney: can.money, openOnly: true }) : Promise.resolve([]),
-    can.jobs ? getCustomerJobs(id, { showMoney: can.money, sort: "created", dir: "desc" }) : Promise.resolve([]),
-    can.quotes ? getCustomerQuotes(id, { showMoney: can.money, openOnly: true }) : Promise.resolve([]),
-    getContacts(id),
-    getCustomerActivity(id, { showMoney: can.money, showCost: can.cost, limit: 8 }),
+    can.jobs ? getCustomerJobs(tenantId, id, { showMoney: can.money, openOnly: true }) : Promise.resolve([]),
+    can.jobs ? getCustomerJobs(tenantId, id, { showMoney: can.money, sort: "created", dir: "desc" }) : Promise.resolve([]),
+    can.quotes ? getCustomerQuotes(tenantId, id, { showMoney: can.money, openOnly: true }) : Promise.resolve([]),
+    getContacts(tenantId, id),
+    getCustomerActivity(tenantId, id, { showMoney: can.money, showCost: can.cost, limit: 8 }),
   ]);
   const completed = pastJobs.filter((j) => j.status === "completed").slice(0, 5);
   return (

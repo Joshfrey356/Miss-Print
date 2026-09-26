@@ -1,7 +1,7 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { and, eq, max } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -17,23 +17,29 @@ import { jobNo, money, parseMoney } from "@/lib/format";
 import { createInvoiceFromJob } from "@/lib/money/service";
 import { emailProvider } from "@/lib/email";
 import { getSettings } from "@/lib/settings";
+import { nextNumber } from "@/lib/tenant";
+import { hashProofToken } from "@/lib/proofs";
 
-const actor = (u: SessionUser) => ({ id: u.id, name: u.name });
+const actor = (u: SessionUser) => ({ id: u.id, name: u.name, tenantId: u.tenantId });
 
 /** Money / quantity inputs from the client: whole, non-negative, and within the DB's integer range. */
 const centsIn = (v: number | null, label: string) => z.number().int().min(0, `${label} can't be negative.`).max(100_000_000, `${label} looks too large.`).parse(v ?? 0);
 const qtyIn = (v: number | null) => z.number().int().min(1, "Quantity must be at least 1.").max(10_000_000, "That quantity looks too large.").parse(v ?? 1);
 
-async function loadJob(jobId: number) {
-  const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId));
+/** A job of the signed-in user's shop; another shop's id is simply "not found". */
+async function loadJob(tenantId: number, jobId: number) {
+  const [job] = await db.select().from(jobs).where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, jobId)));
   if (!job) throw new UserError("Job not found.");
   return job;
 }
 
 /** A contact must belong to the job's customer; otherwise it is dropped. */
-async function contactFor(customerId: number, contactId: number | null) {
+async function contactFor(tenantId: number, customerId: number, contactId: number | null) {
   if (!contactId) return null;
-  const [c] = await db.select({ id: customerContacts.id }).from(customerContacts).where(and(eq(customerContacts.id, contactId), eq(customerContacts.customerId, customerId)));
+  const [c] = await db
+    .select({ id: customerContacts.id })
+    .from(customerContacts)
+    .where(and(eq(customerContacts.tenantId, tenantId), eq(customerContacts.id, contactId), eq(customerContacts.customerId, customerId)));
   return c ? c.id : null;
 }
 
@@ -51,7 +57,7 @@ export async function setJobStatus(jobId: number, status: JobStatus, note?: stri
   return runAction(async () => {
     const user = await requirePermission("jobs.status");
     z.enum(jobStatusEnum.enumValues).parse(status);
-    const job = await loadJob(jobId);
+    const job = await loadJob(user.tenantId, jobId);
     if ((status === "cancelled" || job.status === "cancelled") && !can(user.role, "jobs.edit")) throw new UserError("Only managers and sales can cancel or restore a job.");
     await db.transaction((tx) => changeJobStatus(tx, job, status, actor(user), { note }));
     revalidateJob(job.number);
@@ -63,7 +69,7 @@ export async function setJobStatus(jobId: number, status: JobStatus, note?: stri
 export async function advanceJob(jobId: number) {
   return runAction(async () => {
     const user = await requirePermission("jobs.status");
-    const job = await loadJob(jobId);
+    const job = await loadJob(user.tenantId, jobId);
     const next = nextStatus(job);
     if (!next) throw new UserError("This job has no next step.");
     await db.transaction((tx) => changeJobStatus(tx, job, next, actor(user)));
@@ -78,19 +84,19 @@ export async function moveJobOnBoard(jobId: number, columnKey: string, beforeJob
     const user = await requirePermission("jobs.status");
     const col = BOARD_COLUMNS.find((c) => c.key === columnKey);
     if (!col) throw new UserError("Unknown column.");
-    const job = await loadJob(jobId);
+    const job = await loadJob(user.tenantId, jobId);
     await db.transaction(async (tx) => {
       if (!col.statuses.includes(job.status)) await changeJobStatus(tx, job, col.dropStatus, actor(user), { reason: "moved on board" });
       // Ordering within a column: place before `beforeJobId` (or at the end).
       let order = 0;
       if (beforeJobId) {
-        const [b] = await tx.select({ o: jobs.boardOrder }).from(jobs).where(eq(jobs.id, beforeJobId));
+        const [b] = await tx.select({ o: jobs.boardOrder }).from(jobs).where(and(eq(jobs.tenantId, user.tenantId), eq(jobs.id, beforeJobId)));
         order = (b?.o ?? 0) - 1;
       } else {
-        const [m] = await tx.select({ o: max(jobs.boardOrder) }).from(jobs);
+        const [m] = await tx.select({ o: max(jobs.boardOrder) }).from(jobs).where(eq(jobs.tenantId, user.tenantId));
         order = (m?.o ?? 0) + 1;
       }
-      await tx.update(jobs).set({ boardOrder: order }).where(eq(jobs.id, jobId));
+      await tx.update(jobs).set({ boardOrder: order }).where(and(eq(jobs.tenantId, user.tenantId), eq(jobs.id, job.id)));
     });
     revalidateJob(job.number);
   });
@@ -109,11 +115,13 @@ export async function createJob(_prev: unknown, fd: FormData) {
     if (!customerId) throw new UserError("Choose a customer.");
     const title = str(fd, "title");
     if (!title) throw new UserError("Give the job a short title, e.g. “4x8 Outdoor Banner”.");
-    const [cust] = await db.select().from(customers).where(eq(customers.id, customerId));
+    const tenantId = user.tenantId;
+    const [cust] = await db.select().from(customers).where(and(eq(customers.tenantId, tenantId), eq(customers.id, customerId)));
     if (!cust) throw new UserError("Customer not found.");
-    const { rules } = await getSettings();
+    const { rules } = await getSettings(tenantId);
     const categoryId = int(fd, "categoryId");
-    const [cat] = categoryId ? await db.select().from(productCategories).where(eq(productCategories.id, categoryId)) : [];
+    const [cat] = categoryId ? await db.select().from(productCategories).where(and(eq(productCategories.tenantId, tenantId), eq(productCategories.id, categoryId))) : [];
+    if (categoryId && !cat) throw new UserError("Category not found.");
     const needsDesign = bool(fd, "needsDesign");
     const needsProof = bool(fd, "needsProof");
     const needsInstall = bool(fd, "needsInstall");
@@ -127,8 +135,10 @@ export async function createJob(_prev: unknown, fd: FormData) {
       const [job] = await tx
         .insert(jobs)
         .values({
+          tenantId,
+          number: await nextNumber(tx, tenantId, "job"),
           customerId,
-          contactId: await contactFor(customerId, int(fd, "contactId")),
+          contactId: await contactFor(tenantId, customerId, int(fd, "contactId")),
           title,
           categoryId: categoryId ?? null,
           description: str(fd, "description"),
@@ -152,6 +162,7 @@ export async function createJob(_prev: unknown, fd: FormData) {
         })
         .returning();
       await tx.insert(jobItems).values({
+        tenantId,
         jobId: job!.id,
         categoryId: categoryId ?? null,
         description: str(fd, "itemDescription") ?? title,
@@ -164,11 +175,11 @@ export async function createJob(_prev: unknown, fd: FormData) {
         priceCents,
         recommendedCents: priceCents,
       });
-      await recalcJobTotals(tx, job!.id);
-      await tx.insert(jobStatusHistory).values({ jobId: job!.id, fromStatus: null, toStatus: status, changedBy: user.id, note: "Job created" });
-      await logActivity({ action: "job.created", entityType: "job", entityId: job!.id, jobId: job!.id, customerId, actorId: user.id, summary: "Created job" }, tx);
+      await recalcJobTotals(tx, tenantId, job!.id);
+      await tx.insert(jobStatusHistory).values({ tenantId, jobId: job!.id, fromStatus: null, toStatus: status, changedBy: user.id, note: "Job created" });
+      await logActivity({ tenantId, action: "job.created", entityType: "job", entityId: job!.id, jobId: job!.id, customerId, actorId: user.id, summary: "Created job" }, tx);
       await notify(
-        { userIds: [job!.designerId, job!.productionId, job!.installerId], kind: "assigned", title: `You're on ${jobNo(job!.number)} ${title}`, link: `/jobs/${job!.number}`, actorId: user.id },
+        { tenantId, userIds: [job!.designerId, job!.productionId, job!.installerId], kind: "assigned", title: `You're on ${jobNo(job!.number)} ${title}`, link: `/jobs/${job!.number}`, actorId: user.id },
         tx,
       );
       return job!.number;
@@ -206,7 +217,7 @@ const JobEdit = z.object({
 export async function updateJob(jobId: number, fd: FormData) {
   return runAction(async () => {
     const user = await requirePermission("jobs.edit");
-    const job = await loadJob(jobId);
+    const job = await loadJob(user.tenantId, jobId);
     const fa = str(fd, "fulfillmentAt");
     const data = JobEdit.parse({
       title: str(fd, "title") ?? "",
@@ -215,7 +226,7 @@ export async function updateJob(jobId: number, fd: FormData) {
       priority: str(fd, "priority") ?? "normal",
       fulfillment: str(fd, "fulfillment") ?? "pickup",
       locationId: int(fd, "locationId"),
-      contactId: await contactFor(job.customerId, int(fd, "contactId")),
+      contactId: await contactFor(user.tenantId, job.customerId, int(fd, "contactId")),
       dueDate: str(fd, "dueDate"),
       productionDueDate: str(fd, "productionDueDate"),
       // datetime-local is shop time (Central). Convert with the current offset.
@@ -233,11 +244,12 @@ export async function updateJob(jobId: number, fd: FormData) {
     const changes = diff(job as unknown as Record<string, unknown>, data);
     if (!changes) return;
     await db.transaction(async (tx) => {
-      await tx.update(jobs).set({ ...data, updatedAt: new Date() }).where(eq(jobs.id, jobId));
+      await tx.update(jobs).set({ ...data, updatedAt: new Date() }).where(and(eq(jobs.tenantId, user.tenantId), eq(jobs.id, job.id)));
       const fields = Object.keys(changes.after).map((k) => FIELD_LABELS[k] ?? k);
       const dueChanged = "dueDate" in changes.after;
       await logActivity(
         {
+          tenantId: user.tenantId,
           action: dueChanged ? "job.due_changed" : "job.updated",
           entityType: "job",
           entityId: jobId,
@@ -250,7 +262,7 @@ export async function updateJob(jobId: number, fd: FormData) {
         tx,
       );
       if ("fulfillmentAt" in changes.after && job.installerId && data.fulfillment === "install")
-        await notify({ userIds: [job.installerId], kind: "assigned", title: `Installation changed for ${jobNo(job.number)}`, body: job.title, link: `/jobs/${job.number}`, actorId: user.id }, tx);
+        await notify({ tenantId: user.tenantId, userIds: [job.installerId], kind: "assigned", title: `Installation changed for ${jobNo(job.number)}`, body: job.title, link: `/jobs/${job.number}`, actorId: user.id }, tx);
     });
     revalidateJob(job.number);
   }, "Saved");
@@ -295,12 +307,14 @@ export async function assignJob(jobId: number, field: keyof typeof ASSIGN_FIELDS
   return runAction(async () => {
     const user = await requirePermission("jobs.status");
     if (!Object.hasOwn(ASSIGN_FIELDS, field)) throw new UserError("Unknown role.");
-    const job = await loadJob(jobId);
-    const [person] = userId ? await db.select({ name: users.name }).from(users).where(eq(users.id, userId)) : [];
+    const job = await loadJob(user.tenantId, jobId);
+    const [person] = userId ? await db.select({ name: users.name }).from(users).where(and(eq(users.tenantId, user.tenantId), eq(users.id, userId))) : [];
+    if (userId && !person) throw new UserError("Person not found.");
     await db.transaction(async (tx) => {
-      await tx.update(jobs).set({ [field]: userId, updatedAt: new Date() }).where(eq(jobs.id, jobId));
+      await tx.update(jobs).set({ [field]: userId, updatedAt: new Date() }).where(and(eq(jobs.tenantId, user.tenantId), eq(jobs.id, job.id)));
       await logActivity(
         {
+          tenantId: user.tenantId,
           action: "job.assigned",
           entityType: "job",
           entityId: jobId,
@@ -311,7 +325,7 @@ export async function assignJob(jobId: number, field: keyof typeof ASSIGN_FIELDS
         },
         tx,
       );
-      if (userId) await notify({ userIds: [userId], kind: "assigned", title: `You're the ${ASSIGN_FIELDS[field].toLowerCase()} on ${jobNo(job.number)}`, body: job.title, link: `/jobs/${job.number}`, actorId: user.id }, tx);
+      if (userId) await notify({ tenantId: user.tenantId, userIds: [userId], kind: "assigned", title: `You're the ${ASSIGN_FIELDS[field].toLowerCase()} on ${jobNo(job.number)}`, body: job.title, link: `/jobs/${job.number}`, actorId: user.id }, tx);
     });
     revalidateJob(job.number);
   }, "Assigned");
@@ -323,7 +337,8 @@ export async function assignJob(jobId: number, field: keyof typeof ASSIGN_FIELDS
 export async function saveJobItem(jobId: number, itemId: number | null, fd: FormData) {
   return runAction(async () => {
     const user = await requirePermission("jobs.edit");
-    const job = await loadJob(jobId);
+    const tenantId = user.tenantId;
+    const job = await loadJob(tenantId, jobId);
     const seeMoney = can(user.role, "financials.view");
     const seeCost = can(user.role, "margins.view");
     const description = str(fd, "description");
@@ -344,14 +359,15 @@ export async function saveJobItem(jobId: number, itemId: number | null, fd: Form
     };
     await db.transaction(async (tx) => {
       if (itemId) {
-        const [before] = await tx.select().from(jobItems).where(and(eq(jobItems.id, itemId), eq(jobItems.jobId, jobId)));
+        const [before] = await tx.select().from(jobItems).where(and(eq(jobItems.tenantId, tenantId), eq(jobItems.id, itemId), eq(jobItems.jobId, job.id)));
         if (!before) throw new UserError("Item not found.");
-        await tx.update(jobItems).set(values).where(eq(jobItems.id, itemId));
+        await tx.update(jobItems).set(values).where(and(eq(jobItems.tenantId, tenantId), eq(jobItems.id, itemId)));
         const ch = diff(before as unknown as Record<string, unknown>, values);
         if (ch) {
           const priceChanged = "priceCents" in ch.after;
           await logActivity(
             {
+              tenantId,
               action: priceChanged ? "job.price_changed" : "job.item_updated",
               entityType: "job",
               entityId: jobId,
@@ -364,11 +380,11 @@ export async function saveJobItem(jobId: number, itemId: number | null, fd: Form
           );
         }
       } else {
-        const [{ m }] = await tx.select({ m: max(jobItems.sortOrder) }).from(jobItems).where(eq(jobItems.jobId, jobId));
-        await tx.insert(jobItems).values({ jobId, ...values, recommendedCents: values.priceCents ?? 0, sortOrder: (m ?? 0) + 1 });
-        await logActivity({ action: "job.item_added", entityType: "job", entityId: jobId, jobId, actorId: user.id, summary: `Added item: ${description}${seeMoney ? ` (${money(values.priceCents ?? 0)})` : ""}` }, tx);
+        const [{ m }] = await tx.select({ m: max(jobItems.sortOrder) }).from(jobItems).where(and(eq(jobItems.tenantId, tenantId), eq(jobItems.jobId, job.id)));
+        await tx.insert(jobItems).values({ tenantId, jobId: job.id, ...values, recommendedCents: values.priceCents ?? 0, sortOrder: (m ?? 0) + 1 });
+        await logActivity({ tenantId, action: "job.item_added", entityType: "job", entityId: jobId, jobId, actorId: user.id, summary: `Added item: ${description}${seeMoney ? ` (${money(values.priceCents ?? 0)})` : ""}` }, tx);
       }
-      await recalcJobTotals(tx, jobId);
+      await recalcJobTotals(tx, tenantId, job.id);
     });
     revalidateJob(job.number);
   }, "Saved");
@@ -377,12 +393,12 @@ export async function saveJobItem(jobId: number, itemId: number | null, fd: Form
 export async function removeJobItem(jobId: number, itemId: number) {
   return runAction(async () => {
     const user = await requirePermission("jobs.edit");
-    const job = await loadJob(jobId);
+    const job = await loadJob(user.tenantId, jobId);
     await db.transaction(async (tx) => {
-      const [item] = await tx.delete(jobItems).where(and(eq(jobItems.id, itemId), eq(jobItems.jobId, jobId))).returning();
+      const [item] = await tx.delete(jobItems).where(and(eq(jobItems.tenantId, user.tenantId), eq(jobItems.id, itemId), eq(jobItems.jobId, job.id))).returning();
       if (!item) throw new UserError("Item not found.");
-      await logActivity({ action: "job.item_removed", entityType: "job", entityId: jobId, jobId, actorId: user.id, summary: `Removed item: ${item.description}`, data: { before: item } }, tx);
-      await recalcJobTotals(tx, jobId);
+      await logActivity({ tenantId: user.tenantId, action: "job.item_removed", entityType: "job", entityId: jobId, jobId, actorId: user.id, summary: `Removed item: ${item.description}`, data: { before: item } }, tx);
+      await recalcJobTotals(tx, user.tenantId, job.id);
     });
     revalidateJob(job.number);
   }, "Item removed");
@@ -415,9 +431,9 @@ export async function reorderJobAction(jobId: number, opts: ReorderOptions) {
 export async function archiveJob(jobId: number) {
   return runAction(async () => {
     const user = await requirePermission("jobs.edit");
-    const job = await loadJob(jobId);
-    await db.update(jobs).set({ archivedAt: new Date() }).where(eq(jobs.id, jobId));
-    await logActivity({ action: "job.archived", entityType: "job", entityId: jobId, jobId, actorId: user.id, summary: "Archived job" });
+    const job = await loadJob(user.tenantId, jobId);
+    await db.update(jobs).set({ archivedAt: new Date() }).where(and(eq(jobs.tenantId, user.tenantId), eq(jobs.id, job.id)));
+    await logActivity({ tenantId: user.tenantId, action: "job.archived", entityType: "job", entityId: jobId, jobId, actorId: user.id, summary: "Archived job" });
     revalidateJob(job.number);
   }, "Job archived");
 }
@@ -428,8 +444,8 @@ export async function archiveJob(jobId: number) {
 export async function createJobInvoice(jobId: number) {
   return runAction(async () => {
     const user = await requirePermission("money.edit");
-    const job = await loadJob(jobId);
-    const inv = await createInvoiceFromJob(jobId, actor(user));
+    const job = await loadJob(user.tenantId, jobId);
+    const inv = await createInvoiceFromJob(user.tenantId, job.id, actor(user));
     revalidateJob(job.number);
     revalidatePath("/money");
     return inv;
@@ -443,15 +459,15 @@ export async function sendProof(proofId: number, to: string, message: string | n
   return runAction(async () => {
     const user = await requirePermission("proofs.send");
     const email = z.string().email("Enter the customer's email address.").parse(to.trim());
-    const [proof] = await db.select().from(proofs).where(eq(proofs.id, proofId));
+    const [proof] = await db.select().from(proofs).where(and(eq(proofs.tenantId, user.tenantId), eq(proofs.id, proofId)));
     if (!proof) throw new UserError("Proof not found.");
     if (proof.status === "approved") throw new UserError("This proof is already approved.");
     if (proof.status === "superseded") throw new UserError("A newer proof version exists. Send that one instead.");
-    const job = await loadJob(proof.jobId);
-    const [cust] = await db.select({ name: customers.name }).from(customers).where(eq(customers.id, job.customerId));
+    const job = await loadJob(user.tenantId, proof.jobId);
+    const [cust] = await db.select({ name: customers.name }).from(customers).where(and(eq(customers.tenantId, user.tenantId), eq(customers.id, job.customerId)));
     const token = randomBytes(32).toString("base64url");
     const link = `${process.env.APP_URL ?? "http://localhost:3000"}/proof/${token}`;
-    const { company } = await getSettings();
+    const { company } = await getSettings(user.tenantId);
     const subject = `Proof ready for approval: ${job.title} (${jobNo(job.number)}) — Proof V${proof.version}`;
     const text = [
       `Hello,`,
@@ -466,15 +482,15 @@ export async function sendProof(proofId: number, to: string, message: string | n
       `Thank you,`,
       `${company.name} · ${company.phone} · ${company.email}`,
     ].join("\n");
-    const res = await emailProvider().send({ to: email, subject, text, replyTo: company.email });
+    const res = await emailProvider().send({ to: email, subject, text, fromName: company.name, replyTo: company.email || undefined });
     if (!res.ok) throw new UserError("The email could not be sent. Check the email settings.");
     await db.transaction(async (tx) => {
       await tx
         .update(proofs)
-        .set({ status: "sent", tokenHash: createHash("sha256").update(token).digest("hex"), tokenExpiresAt: new Date(Date.now() + 30 * 86400000), sentAt: new Date(), sentTo: email, sentBy: user.id, note: message ?? proof.note })
-        .where(eq(proofs.id, proofId));
-      await tx.insert(communications).values({ customerId: job.customerId, jobId: job.id, channel: "email", template: "proof_ready", toAddress: email, subject, body: text, status: "sent", providerId: res.providerId, sentBy: user.id });
-      await logActivity({ action: "proof.sent", entityType: "proof", entityId: proofId, jobId: job.id, customerId: job.customerId, actorId: user.id, summary: `Sent Proof V${proof.version} to ${email}` }, tx);
+        .set({ status: "sent", tokenHash: hashProofToken(token), tokenExpiresAt: new Date(Date.now() + 30 * 86400000), sentAt: new Date(), sentTo: email, sentBy: user.id, note: message ?? proof.note })
+        .where(and(eq(proofs.tenantId, user.tenantId), eq(proofs.id, proof.id)));
+      await tx.insert(communications).values({ tenantId: user.tenantId, customerId: job.customerId, jobId: job.id, channel: "email", template: "proof_ready", toAddress: email, subject, body: text, status: "sent", providerId: res.providerId, sentBy: user.id });
+      await logActivity({ tenantId: user.tenantId, action: "proof.sent", entityType: "proof", entityId: proofId, jobId: job.id, customerId: job.customerId, actorId: user.id, summary: `Sent Proof V${proof.version} to ${email}` }, tx);
       if (job.status !== "waiting_approval") await changeJobStatus(tx, job, "waiting_approval", actor(user), { reason: `Proof V${proof.version} sent` });
     });
     revalidateJob(job.number);
@@ -489,17 +505,17 @@ export async function recordProofApproval(proofId: number, approverName: string)
     const user = await requirePermission("proofs.send");
     const name = approverName.trim();
     if (!name) throw new UserError("Who approved it?");
-    const [proof] = await db.select().from(proofs).where(eq(proofs.id, proofId));
+    const [proof] = await db.select().from(proofs).where(and(eq(proofs.tenantId, user.tenantId), eq(proofs.id, proofId)));
     if (!proof) throw new UserError("Proof not found.");
     if (proof.status === "approved") throw new UserError("This proof is already approved.");
     if (proof.status === "superseded") throw new UserError("A newer proof version exists. Approve that one instead.");
-    const job = await loadJob(proof.jobId);
+    const job = await loadJob(user.tenantId, proof.jobId);
     await db.transaction(async (tx) => {
       await tx
         .update(proofs)
         .set({ status: "approved", respondedAt: new Date(), responderName: name, approvalStatement: `Approval recorded by ${user.name} (in person / by phone).` })
-        .where(eq(proofs.id, proofId));
-      await logActivity({ action: "proof.approved", entityType: "proof", entityId: proofId, jobId: job.id, customerId: job.customerId, actorId: user.id, summary: `Proof V${proof.version} approved by ${name} (recorded by ${user.name})` }, tx);
+        .where(and(eq(proofs.tenantId, user.tenantId), eq(proofs.id, proof.id)));
+      await logActivity({ tenantId: user.tenantId, action: "proof.approved", entityType: "proof", entityId: proofId, jobId: job.id, customerId: job.customerId, actorId: user.id, summary: `Proof V${proof.version} approved by ${name} (recorded by ${user.name})` }, tx);
       if (["proof_ready", "waiting_approval", "design"].includes(job.status)) await changeJobStatus(tx, job, "approved_for_production", actor(user), { reason: `Proof V${proof.version} approved` });
     });
     revalidateJob(job.number);
@@ -508,13 +524,10 @@ export async function recordProofApproval(proofId: number, approverName: string)
 
 export async function updateContactOnJob(jobId: number, contactId: number | null) {
   return runAction(async () => {
-    await requirePermission("jobs.edit");
-    const job = await loadJob(jobId);
-    if (contactId) {
-      const [c] = await db.select({ id: customerContacts.id }).from(customerContacts).where(and(eq(customerContacts.id, contactId), eq(customerContacts.customerId, job.customerId)));
-      if (!c) throw new UserError("Contact not found.");
-    }
-    await db.update(jobs).set({ contactId }).where(eq(jobs.id, jobId));
+    const user = await requirePermission("jobs.edit");
+    const job = await loadJob(user.tenantId, jobId);
+    if (contactId && !(await contactFor(user.tenantId, job.customerId, contactId))) throw new UserError("Contact not found.");
+    await db.update(jobs).set({ contactId }).where(and(eq(jobs.tenantId, user.tenantId), eq(jobs.id, job.id)));
     revalidateJob(job.number);
   });
 }

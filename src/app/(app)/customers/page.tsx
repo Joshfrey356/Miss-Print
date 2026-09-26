@@ -41,7 +41,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
   const showArchived = one(sp.archived) === "1";
   const pageNum = Math.max(1, Number(one(sp.page)) || 1);
 
-  const { rows, total, page } = await listCustomers({ q, filter, sort, dir, page: pageNum, showArchived, showMoney });
+  const { rows, total, page } = await listCustomers(user.tenantId, { q, filter, sort, dir, page: pageNum, showArchived, showMoney });
 
   // Current list state, for building links.
   const params: Record<string, string | undefined> = {

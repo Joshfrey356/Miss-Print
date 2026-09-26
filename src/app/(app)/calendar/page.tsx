@@ -33,11 +33,6 @@ const VIEWS: { key: CalView; label: string }[] = [
   { key: "week", label: "Week" },
   { key: "month", label: "Month" },
 ];
-const LOCS = [
-  { code: "MUNSTER", label: "Munster" },
-  { code: "HAMMOND", label: "Hammond" },
-  { code: "OFFSITE", label: "Off-site" },
-];
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 type State = { view: CalView; date: string; types: CalType[]; loc: string | null; mine: boolean };
@@ -61,12 +56,16 @@ export default async function CalendarPage({ searchParams }: { searchParams: SP 
   const view = (VIEWS.some((v) => v.key === one("view")) ? one("view") : "week") as CalView;
   const date = isYmd(one("date")) ? one("date")! : today();
   const types = (one("types") ?? "").split(",").filter((t): t is CalType => CAL_TYPES.some((c) => c.key === t));
-  const loc = LOCS.some((l) => l.code === one("loc")) ? one("loc")! : null;
+  // Location chips: this shop's own locations, plus "Off-site" (installs & deliveries) if it has no such location.
+  const locations = await getLocations(user.tenantId);
+  const locs = locations.map((l) => ({ code: l.code, label: l.name }));
+  if (!locs.some((l) => l.code === "OFFSITE")) locs.push({ code: "OFFSITE", label: "Off-site" });
+  const loc = locs.some((l) => l.code === one("loc")) ? one("loc")! : null;
   const mine = one("mine") === "1";
   const state: State = { view, date, types, loc, mine };
 
   const { from, to } = viewRange(view, date);
-  const [all, users, locations] = await Promise.all([getCalendarItems({ from, to, user }), getActiveUsers(), getLocations()]);
+  const [all, users] = await Promise.all([getCalendarItems({ from, to, user }), getActiveUsers(user.tenantId)]);
   const items = all.filter((i) => (!types.length || types.includes(i.type)) && (!loc || i.locationCode === loc) && (!mine || i.mine));
   const byDay = new Map<string, CalItem[]>();
   for (const i of items) byDay.set(i.date, [...(byDay.get(i.date) ?? []), i]);
@@ -121,11 +120,11 @@ export default async function CalendarPage({ searchParams }: { searchParams: SP 
           <ChevronRight className="ml-auto size-4 text-slate-400 transition-transform group-open:rotate-90" />
         </summary>
         <div className="border-t border-slate-100 px-4 py-3">
-          <Filters state={state} />
+          <Filters state={state} locs={locs} />
         </div>
       </details>
       <div className="mb-4 hidden lg:block">
-        <Filters state={state} />
+        <Filters state={state} locs={locs} />
       </div>
 
       {/* ---- Views ---- */}
@@ -175,7 +174,7 @@ function Chip({ href, active, children }: { href: string; active: boolean; child
   );
 }
 
-function Filters({ state }: { state: State }) {
+function Filters({ state, locs }: { state: State; locs: { code: string; label: string }[] }) {
   const toggleType = (k: CalType) => (state.types.includes(k) ? state.types.filter((x) => x !== k) : [...state.types, k]);
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -186,7 +185,7 @@ function Filters({ state }: { state: State }) {
         </Chip>
       ))}
       <span className="mx-1 hidden h-6 w-px bg-slate-200 sm:block" />
-      {LOCS.map((l) => (
+      {locs.map((l) => (
         <Chip key={l.code} href={hrefFor(state, { loc: state.loc === l.code ? null : l.code })} active={state.loc === l.code}>
           {l.label}
         </Chip>

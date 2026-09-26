@@ -20,8 +20,8 @@ const EMPTY: Record<string, string> = {
   all: "No invoices match.",
 };
 
-export async function InvoicesTab({ params }: { params: SP }) {
-  const [data, counts] = await Promise.all([listInvoices(params), invoiceFilterCounts()]);
+export async function InvoicesTab({ tenantId, params }: { tenantId: number; params: SP }) {
+  const [data, counts] = await Promise.all([listInvoices(tenantId, params), invoiceFilterCounts(tenantId)]);
   const now = today();
   const p = { ...params, tab: "invoices" };
   const chip = (key: string, label: string, count?: number, tone?: "red") => ({ key, label, count, tone, href: withParams("/money", p, { status: key === "all" ? undefined : key, page: undefined }) });

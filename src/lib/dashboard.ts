@@ -16,7 +16,7 @@ function weekStart(ymd: string) {
 }
 
 /** TODAY counts — everyone sees these (no money). */
-export async function todayCounts() {
+export async function todayCounts(tenantId: number) {
   const t = today();
   const dayStart = shopMidnight(t).toISOString();
   const dayEnd = shopMidnight(addDays(t, 1)).toISOString();
@@ -31,7 +31,7 @@ export async function todayCounts() {
         inProduction: sql<number>`count(*) filter (where ${inArray(jobs.status, ["approved_for_production", "production", "finishing", "quality_check"])})::int`,
       })
       .from(jobs)
-      .where(isNull(jobs.archivedAt)),
+      .where(and(eq(jobs.tenantId, tenantId), isNull(jobs.archivedAt))),
     db
       .select({
         awaiting: sql<number>`count(*) filter (where ${quotes.status} = 'sent')::int`,
@@ -39,19 +39,21 @@ export async function todayCounts() {
         accepted: sql<number>`count(*) filter (where ${quotes.status} = 'accepted')::int`,
       })
       .from(quotes)
-      .where(isNull(quotes.archivedAt)),
-    db.select({ n: sql<number>`count(*)::int` }).from(proofs).where(eq(proofs.status, "sent")),
+      .where(and(eq(quotes.tenantId, tenantId), isNull(quotes.archivedAt))),
+    db.select({ n: sql<number>`count(*)::int` }).from(proofs).where(and(eq(proofs.tenantId, tenantId), eq(proofs.status, "sent"))),
     db
       .select({
         unpaid: sql<number>`count(*) filter (where ${inArray(invoices.status, ["sent", "partial"])})::int`,
         overdue: sql<number>`count(*) filter (where ${inArray(invoices.status, ["sent", "partial"])} and ${invoices.dueDate} < ${t})::int`,
       })
-      .from(invoices),
+      .from(invoices)
+      .where(eq(invoices.tenantId, tenantId)),
     db
       .select({ n: sql<number>`count(*)::int` })
       .from(jobs)
       .where(
         and(
+          eq(jobs.tenantId, tenantId),
           isNull(jobs.archivedAt),
           inArray(jobs.status, ["approved_for_production", "production"]),
           sql`not exists (select 1 from files f where f.job_id = ${jobs.id} and f.folder in ('original_artwork','customer','production') and f.archived_at is null)`,
@@ -62,11 +64,11 @@ export async function todayCounts() {
 }
 
 /** Money cards (owner / accounting / managers with financials). Revenue = invoice subtotals (no tax). */
-export async function moneyCards() {
+export async function moneyCards(tenantId: number) {
   const t = today();
   const ms = monthStart(t);
   const ws = weekStart(t);
-  const { rules } = await getSettings();
+  const { rules } = await getSettings(tenantId);
   const [[s], [ar], [oq], [cash], [exp], [cogs]] = await Promise.all([
     db
       .select({
@@ -75,17 +77,17 @@ export async function moneyCards() {
         month: sql<number>`coalesce(sum(${invoices.subtotalCents}) filter (where ${invoices.issueDate} >= ${ms}), 0)::bigint`,
       })
       .from(invoices)
-      .where(and(ne(invoices.status, "void"), gte(invoices.issueDate, addDays(ms, -7)))),
+      .where(and(eq(invoices.tenantId, tenantId), ne(invoices.status, "void"), gte(invoices.issueDate, addDays(ms, -7)))),
     db
       .select({ outstanding: sql<number>`coalesce(sum(${invoices.totalCents} - ${invoices.paidCents}), 0)::bigint`, n: sql<number>`count(*)::int` })
       .from(invoices)
-      .where(inArray(invoices.status, ["sent", "partial"])),
+      .where(and(eq(invoices.tenantId, tenantId), inArray(invoices.status, ["sent", "partial"]))),
     db
       .select({ n: sql<number>`count(*)::int`, value: sql<number>`coalesce(sum(${quotes.subtotalCents}), 0)::bigint` })
       .from(quotes)
-      .where(and(inArray(quotes.status, ["draft", "sent", "accepted"]), isNull(quotes.archivedAt))),
-    db.select({ v: sql<number>`coalesce(sum(${payments.amountCents}), 0)::bigint` }).from(payments).where(and(gte(payments.receivedOn, ms), isNull(payments.voidedAt))),
-    db.select({ v: sql<number>`coalesce(sum(${expenses.amountCents}), 0)::bigint` }).from(expenses).where(and(gte(expenses.spentOn, ms), isNull(expenses.archivedAt))),
+      .where(and(eq(quotes.tenantId, tenantId), inArray(quotes.status, ["draft", "sent", "accepted"]), isNull(quotes.archivedAt))),
+    db.select({ v: sql<number>`coalesce(sum(${payments.amountCents}), 0)::bigint` }).from(payments).where(and(eq(payments.tenantId, tenantId), gte(payments.receivedOn, ms), isNull(payments.voidedAt))),
+    db.select({ v: sql<number>`coalesce(sum(${expenses.amountCents}), 0)::bigint` }).from(expenses).where(and(eq(expenses.tenantId, tenantId), gte(expenses.spentOn, ms), isNull(expenses.archivedAt))),
     // Estimated COGS for this month's invoiced jobs: attached job expenses + labor hours × labor cost.
     db
       .select({
@@ -93,7 +95,7 @@ export async function moneyCards() {
       })
       .from(invoices)
       .leftJoin(jobs, eq(jobs.id, invoices.jobId))
-      .where(and(ne(invoices.status, "void"), gte(invoices.issueDate, ms))),
+      .where(and(eq(invoices.tenantId, tenantId), ne(invoices.status, "void"), gte(invoices.issueDate, ms))),
   ]);
   const month = Number(s!.month);
   return {
@@ -110,7 +112,7 @@ export async function moneyCards() {
   };
 }
 
-export async function revenueByMonth(months = 12) {
+export async function revenueByMonth(tenantId: number, months = 12) {
   const t = today();
   const from = addDays(monthStart(t), 0).slice(0, 7);
   const start = new Date(`${from}-01T12:00:00Z`);
@@ -119,7 +121,7 @@ export async function revenueByMonth(months = 12) {
   const rows = await db
     .select({ m: sql<string>`to_char(${invoices.issueDate}, 'YYYY-MM')`, v: sql<number>`sum(${invoices.subtotalCents})::bigint`, n: sql<number>`count(*)::int` })
     .from(invoices)
-    .where(and(ne(invoices.status, "void"), gte(invoices.issueDate, fromYmd)))
+    .where(and(eq(invoices.tenantId, tenantId), ne(invoices.status, "void"), gte(invoices.issueDate, fromYmd)))
     .groupBy(sql`1`);
   const map = new Map(rows.map((r) => [r.m, r]));
   return Array.from({ length: months }, (_, i) => {
@@ -131,14 +133,14 @@ export async function revenueByMonth(months = 12) {
   });
 }
 
-export async function salesByCategory(days = 90) {
+export async function salesByCategory(tenantId: number, days = 90) {
   const from = addDays(today(), -days);
   const rows = await db
     .select({ name: sql<string>`coalesce(${productCategories.name}, 'Other')`, v: sql<number>`sum(${invoices.subtotalCents})::bigint` })
     .from(invoices)
     .leftJoin(jobs, eq(jobs.id, invoices.jobId))
     .leftJoin(productCategories, eq(productCategories.id, jobs.categoryId))
-    .where(and(ne(invoices.status, "void"), gte(invoices.issueDate, from)))
+    .where(and(eq(invoices.tenantId, tenantId), ne(invoices.status, "void"), gte(invoices.issueDate, from)))
     .groupBy(sql`1`)
     .orderBy(sql`2 desc`);
   const top = rows.slice(0, 6).map((r) => ({ label: r.name, value: Number(r.v) }));
@@ -147,25 +149,25 @@ export async function salesByCategory(days = 90) {
   return top;
 }
 
-export async function quoteWinRate(days = 90) {
+export async function quoteWinRate(tenantId: number, days = 90) {
   const [r] = await db
     .select({
       won: sql<number>`count(*) filter (where ${quotes.status} in ('accepted','converted'))::int`,
       lost: sql<number>`count(*) filter (where ${quotes.status} in ('declined','expired'))::int`,
     })
     .from(quotes)
-    .where(and(isNull(quotes.archivedAt), gte(quotes.createdAt, new Date(Date.now() - days * 86400000))));
+    .where(and(eq(quotes.tenantId, tenantId), isNull(quotes.archivedAt), gte(quotes.createdAt, new Date(Date.now() - days * 86400000))));
   const decided = r!.won + r!.lost;
   return { won: r!.won, lost: r!.lost, rate: decided ? r!.won / decided : null };
 }
 
-export async function jobsCompletedByMonth(months = 6) {
+export async function jobsCompletedByMonth(tenantId: number, months = 6) {
   const start = new Date(`${today().slice(0, 7)}-01T12:00:00Z`);
   start.setUTCMonth(start.getUTCMonth() - (months - 1));
   const rows = await db
     .select({ m: sql<string>`to_char(${jobs.completedAt} at time zone 'America/Chicago', 'YYYY-MM')`, n: sql<number>`count(*)::int` })
     .from(jobs)
-    .where(and(eq(jobs.status, "completed"), gte(jobs.completedAt, start)))
+    .where(and(eq(jobs.tenantId, tenantId), eq(jobs.status, "completed"), gte(jobs.completedAt, start)))
     .groupBy(sql`1`);
   const map = new Map(rows.map((r) => [r.m, r.n]));
   return Array.from({ length: months }, (_, i) => {
@@ -177,7 +179,7 @@ export async function jobsCompletedByMonth(months = 6) {
 }
 
 /** Important internal messages + my unread mentions from the last 3 days. */
-export async function importantMessages(userId: number) {
+export async function importantMessages(tenantId: number, userId: number) {
   const since = new Date(Date.now() - 3 * 86400000);
   return db
     .select({ id: messages.id, body: messages.body, at: messages.createdAt, channel: messages.channel, jobNumber: jobs.number, jobTitle: jobs.title, author: users.name, color: users.color })
@@ -186,6 +188,7 @@ export async function importantMessages(userId: number) {
     .leftJoin(jobs, eq(jobs.id, messages.jobId))
     .where(
       and(
+        eq(messages.tenantId, tenantId),
         isNull(messages.archivedAt),
         gte(messages.createdAt, since),
         or(eq(messages.important, true), sql`exists (select 1 from mentions m where m.message_id = ${messages.id} and m.user_id = ${userId})`),
@@ -196,19 +199,19 @@ export async function importantMessages(userId: number) {
 }
 
 /** Lists for "Needs attention" drilldowns. */
-export async function attentionJobs() {
+export async function attentionJobs(tenantId: number) {
   const t = today();
   return db
     .select({ number: jobs.number, title: jobs.title, customer: customers.name, dueDate: jobs.dueDate, status: jobs.status, priority: jobs.priority })
     .from(jobs)
     .innerJoin(customers, eq(customers.id, jobs.customerId))
-    .where(and(isNull(jobs.archivedAt), inArray(jobs.status, WORK_STATUSES), lte(jobs.dueDate, t)))
+    .where(and(eq(jobs.tenantId, tenantId), isNull(jobs.archivedAt), inArray(jobs.status, WORK_STATUSES), lte(jobs.dueDate, t)))
     .orderBy(jobs.dueDate)
     .limit(8);
 }
 
 /** Jobs a specific person should work on next (their stage), for non-owner dashboards. */
-export async function myQueue(userId: number, role: string) {
+export async function myQueue(tenantId: number, userId: number, role: string) {
   const t = today();
   const stage =
     role === "designer" ? and(eq(jobs.designerId, userId), inArray(jobs.status, ["waiting_artwork", "design", "proof_ready", "waiting_approval"])) :
@@ -219,7 +222,7 @@ export async function myQueue(userId: number, role: string) {
     .select({ id: jobs.id, number: jobs.number, title: jobs.title, customer: customers.name, dueDate: jobs.dueDate, status: jobs.status, priority: jobs.priority, fulfillmentAt: jobs.fulfillmentAt, siteAddress: jobs.siteAddress })
     .from(jobs)
     .innerJoin(customers, eq(customers.id, jobs.customerId))
-    .where(and(isNull(jobs.archivedAt), stage))
+    .where(and(eq(jobs.tenantId, tenantId), isNull(jobs.archivedAt), stage))
     .orderBy(sql`case ${jobs.priority} when 'critical' then 0 when 'rush' then 1 else 2 end`, sql`${jobs.dueDate} asc nulls last`)
     .limit(12);
   return rows.map((r) => ({ ...r, overdue: !!r.dueDate && r.dueDate < t && WORK_STATUSES.includes(r.status) }));

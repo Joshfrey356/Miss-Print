@@ -19,6 +19,7 @@ export async function GET(req: Request) {
     .from(customers)
     .where(
       and(
+        eq(customers.tenantId, user.tenantId),
         isNull(customers.archivedAt),
         id
           ? eq(customers.id, id)
@@ -38,7 +39,7 @@ export async function GET(req: Request) {
     ? await db
         .select({ id: customerContacts.id, customerId: customerContacts.customerId, name: customerContacts.name, email: customerContacts.email, isPrimary: customerContacts.isPrimary })
         .from(customerContacts)
-        .where(and(inArray(customerContacts.customerId, rows.map((r) => r.id)), isNull(customerContacts.archivedAt)))
+        .where(and(eq(customerContacts.tenantId, user.tenantId), inArray(customerContacts.customerId, rows.map((r) => r.id)), isNull(customerContacts.archivedAt)))
     : [];
   // The customer discount is pricing data: only for roles that can see prices.
   const showMoney = can(user.role, "financials.view");

@@ -38,6 +38,7 @@ export async function getCalendarItems({ from, to, user }: { from: string; to: s
   const localDate = (col: typeof jobs.fulfillmentAt | typeof calendarEvents.startsAt) => sql<string>`to_char(${col} at time zone 'America/Chicago', 'YYYY-MM-DD')`;
   const inRange = (col: typeof jobs.fulfillmentAt | typeof calendarEvents.startsAt) =>
     sql`(${col} at time zone 'America/Chicago')::date between ${from}::date and ${to}::date`;
+  const tenantId = user.tenantId;
 
   const jobCols = {
     id: jobs.id,
@@ -63,13 +64,20 @@ export async function getCalendarItems({ from, to, user }: { from: string; to: s
       .from(jobs)
       .innerJoin(customers, eq(customers.id, jobs.customerId))
       .leftJoin(locations, eq(locations.id, jobs.locationId))
-      .where(and(isNull(jobs.archivedAt), inArray(jobs.status, OPEN_STATUSES), sql`${jobs.dueDate} between ${from}::date and ${to}::date`)),
+      .where(
+        and(
+          eq(jobs.tenantId, tenantId),
+          isNull(jobs.archivedAt),
+          inArray(jobs.status, OPEN_STATUSES),
+          sql`${jobs.dueDate} between ${from}::date and ${to}::date`,
+        ),
+      ),
     db
       .select({ ...jobCols, localDate: localDate(jobs.fulfillmentAt) })
       .from(jobs)
       .innerJoin(customers, eq(customers.id, jobs.customerId))
       .leftJoin(locations, eq(locations.id, jobs.locationId))
-      .where(and(isNull(jobs.archivedAt), ne(jobs.status, "cancelled"), inRange(jobs.fulfillmentAt))),
+      .where(and(eq(jobs.tenantId, tenantId), isNull(jobs.archivedAt), ne(jobs.status, "cancelled"), inRange(jobs.fulfillmentAt))),
     db
       .select({
         id: calendarEvents.id,
@@ -91,8 +99,8 @@ export async function getCalendarItems({ from, to, user }: { from: string; to: s
       .from(calendarEvents)
       .leftJoin(locations, eq(locations.id, calendarEvents.locationId))
       .leftJoin(eventJobs, eq(eventJobs.id, calendarEvents.jobId))
-      .where(and(isNull(calendarEvents.archivedAt), inRange(calendarEvents.startsAt))),
-    db.select({ code: locations.code, name: locations.name }).from(locations).where(eq(locations.code, "OFFSITE")),
+      .where(and(eq(calendarEvents.tenantId, tenantId), isNull(calendarEvents.archivedAt), inRange(calendarEvents.startsAt))),
+    db.select({ code: locations.code, name: locations.name }).from(locations).where(and(eq(locations.tenantId, tenantId), eq(locations.code, "OFFSITE"))),
   ]);
 
   const now = today();

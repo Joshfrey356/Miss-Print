@@ -20,40 +20,41 @@ export type ExpenseInput = {
   receiptFileId?: number | null;
 };
 
-export const getVendorNames = () =>
-  db.select({ id: vendors.id, name: vendors.name }).from(vendors).where(isNull(vendors.archivedAt)).orderBy(asc(vendors.name));
+export const getVendorNames = (tenantId: number) =>
+  db.select({ id: vendors.id, name: vendors.name }).from(vendors).where(and(eq(vendors.tenantId, tenantId), isNull(vendors.archivedAt))).orderBy(asc(vendors.name));
 
 /** Match a typed vendor name to a vendor record (case-insensitive). */
-async function vendorFor(name: string) {
+async function vendorFor(tenantId: number, name: string) {
   const [v] = await db
     .select({ id: vendors.id, name: vendors.name })
     .from(vendors)
-    .where(and(isNull(vendors.archivedAt), sql`lower(${vendors.name}) = ${name.trim().toLowerCase()}`))
+    .where(and(eq(vendors.tenantId, tenantId), isNull(vendors.archivedAt), sql`lower(${vendors.name}) = ${name.trim().toLowerCase()}`))
     .limit(1);
   return v ?? null;
 }
 
-/** "MP-10428" / "10428" → job, or throws a friendly error. Blank → null. */
-export async function jobFromNumberInput(input: string | null) {
+/** "MP-10428" / "10428" → job in this shop, or throws a friendly error. Blank → null. */
+export async function jobFromNumberInput(tenantId: number, input: string | null) {
   if (!input?.trim()) return null;
   const n = parseJobNumber(input);
   if (n == null) throw new UserError(`"${input}" isn't a job number. Use a number like MP-10428.`);
-  const [job] = await db.select({ id: jobs.id, number: jobs.number, title: jobs.title, customerId: jobs.customerId }).from(jobs).where(eq(jobs.number, n));
+  const [job] = await db.select({ id: jobs.id, number: jobs.number, title: jobs.title, customerId: jobs.customerId }).from(jobs).where(and(eq(jobs.tenantId, tenantId), eq(jobs.number, n)));
   if (!job) throw new UserError(`Job ${jobNo(n)} wasn't found.`);
   return job;
 }
 
-export async function createExpense(input: ExpenseInput, actor: Actor) {
-  const vendor = await vendorFor(input.vendorName);
+export async function createExpense(tenantId: number, input: ExpenseInput, actor: Actor) {
+  const vendor = await vendorFor(tenantId, input.vendorName);
   const vendorName = vendor?.name ?? input.vendorName.trim();
   return db.transaction(async (tx) => {
     const [row] = await tx
       .insert(expenses)
-      .values({ ...input, vendorName, vendorId: vendor?.id ?? null, receiptFileId: input.receiptFileId ?? null, createdBy: actor.id })
+      .values({ ...input, tenantId, vendorName, vendorId: vendor?.id ?? null, receiptFileId: input.receiptFileId ?? null, createdBy: actor.id })
       .returning();
-    const [job] = input.jobId ? await tx.select({ number: jobs.number, customerId: jobs.customerId }).from(jobs).where(eq(jobs.id, input.jobId)) : [];
+    const [job] = input.jobId ? await tx.select({ number: jobs.number, customerId: jobs.customerId }).from(jobs).where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, input.jobId))) : [];
     await logActivity(
       {
+        tenantId,
         action: "expense.created",
         entityType: "expense",
         entityId: row!.id,
@@ -68,10 +69,10 @@ export async function createExpense(input: ExpenseInput, actor: Actor) {
   });
 }
 
-export async function updateExpense(id: number, input: ExpenseInput, actor: Actor) {
-  const [before] = await db.select().from(expenses).where(and(eq(expenses.id, id), isNull(expenses.archivedAt)));
+export async function updateExpense(tenantId: number, id: number, input: ExpenseInput, actor: Actor) {
+  const [before] = await db.select().from(expenses).where(and(eq(expenses.tenantId, tenantId), eq(expenses.id, id), isNull(expenses.archivedAt)));
   if (!before) throw new UserError("Expense not found.");
-  const vendor = await vendorFor(input.vendorName);
+  const vendor = await vendorFor(tenantId, input.vendorName);
   const next = {
     vendorName: vendor?.name ?? input.vendorName.trim(),
     vendorId: vendor?.id ?? null,
@@ -86,9 +87,10 @@ export async function updateExpense(id: number, input: ExpenseInput, actor: Acto
   const changes = diff(before as unknown as Record<string, unknown>, next);
   if (!changes) return before;
   return db.transaction(async (tx) => {
-    const [row] = await tx.update(expenses).set(next).where(eq(expenses.id, id)).returning();
+    const [row] = await tx.update(expenses).set(next).where(and(eq(expenses.tenantId, tenantId), eq(expenses.id, id))).returning();
     await logActivity(
       {
+        tenantId,
         action: "expense.updated",
         entityType: "expense",
         entityId: id,
@@ -103,13 +105,13 @@ export async function updateExpense(id: number, input: ExpenseInput, actor: Acto
   });
 }
 
-export async function archiveExpense(id: number, actor: Actor) {
-  const [e] = await db.select().from(expenses).where(and(eq(expenses.id, id), isNull(expenses.archivedAt)));
+export async function archiveExpense(tenantId: number, id: number, actor: Actor) {
+  const [e] = await db.select().from(expenses).where(and(eq(expenses.tenantId, tenantId), eq(expenses.id, id), isNull(expenses.archivedAt)));
   if (!e) throw new UserError("Expense not found.");
   await db.transaction(async (tx) => {
-    await tx.update(expenses).set({ archivedAt: new Date() }).where(eq(expenses.id, id));
+    await tx.update(expenses).set({ archivedAt: new Date() }).where(and(eq(expenses.tenantId, tenantId), eq(expenses.id, id)));
     await logActivity(
-      { action: "expense.archived", entityType: "expense", entityId: id, jobId: e.jobId, actorId: actor.id, summary: `Removed expense: ${money(e.amountCents)} from ${e.vendorName} (${e.spentOn})` },
+      { tenantId, action: "expense.archived", entityType: "expense", entityId: id, jobId: e.jobId, actorId: actor.id, summary: `Removed expense: ${money(e.amountCents)} from ${e.vendorName} (${e.spentOn})` },
       tx,
     );
   });
@@ -117,13 +119,13 @@ export async function archiveExpense(id: number, actor: Actor) {
 }
 
 /** Vendor names for the quick-entry datalist, with the category last used for each (so it can be pre-picked). */
-export async function getVendorSuggestions() {
+export async function getVendorSuggestions(tenantId: number) {
   const [known, recent] = await Promise.all([
-    getVendorNames(),
+    getVendorNames(tenantId),
     db.execute(sql`
       select * from (
         select distinct on (lower(vendor_name)) vendor_name as name, category::text as category, spent_on::text as last
-        from ${expenses} where archived_at is null
+        from ${expenses} where tenant_id = ${tenantId} and archived_at is null
         order by lower(vendor_name), spent_on desc, id desc
       ) v order by last desc limit 300`) as unknown as Promise<{ name: string; category: ExpenseCategory; last: string }[]>,
   ]);

@@ -32,7 +32,7 @@ export default async function MoneyPage({ searchParams }: { searchParams: Promis
   const canMargins = can(user.role, "margins.view");
   const tabs = TABS.filter((t) => t.key !== "profitability" || canMargins);
   const tab = tabs.find((t) => t.key === params.tab)?.key ?? "overview";
-  const counts = await invoiceFilterCounts();
+  const counts = await invoiceFilterCounts(user.tenantId);
   const acct = accounting();
 
   return (
@@ -58,12 +58,12 @@ export default async function MoneyPage({ searchParams }: { searchParams: Promis
           count: t.key === "receivables" ? counts.overdue : undefined,
         }))}
       />
-      {tab === "overview" && <OverviewTab canEdit={can(user.role, "money.edit")} canMargins={canMargins} />}
-      {tab === "invoices" && <InvoicesTab params={params} />}
-      {tab === "payments" && <PaymentsTab params={params} canVoid={can(user.role, "money.void")} />}
-      {tab === "expenses" && <ExpensesTab params={params} canEdit={can(user.role, "expenses.edit")} />}
-      {tab === "receivables" && <ReceivablesTab params={params} canEdit={can(user.role, "money.edit")} />}
-      {tab === "profitability" && <ProfitabilityTab params={params} />}
+      {tab === "overview" && <OverviewTab tenantId={user.tenantId} canEdit={can(user.role, "money.edit")} canMargins={canMargins} />}
+      {tab === "invoices" && <InvoicesTab tenantId={user.tenantId} params={params} />}
+      {tab === "payments" && <PaymentsTab tenantId={user.tenantId} params={params} canVoid={can(user.role, "money.void")} />}
+      {tab === "expenses" && <ExpensesTab tenantId={user.tenantId} params={params} canEdit={can(user.role, "expenses.edit")} />}
+      {tab === "receivables" && <ReceivablesTab tenantId={user.tenantId} params={params} canEdit={can(user.role, "money.edit")} />}
+      {tab === "profitability" && <ProfitabilityTab tenantId={user.tenantId} params={params} />}
 
       <p className="mt-8 text-center text-sm text-slate-400">
         {acct.name === "none"

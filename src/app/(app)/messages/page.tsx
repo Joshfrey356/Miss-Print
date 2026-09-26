@@ -39,15 +39,22 @@ export default async function MessagesPage({ searchParams }: { searchParams: SP 
   const hasSelection = Boolean(requested) || showMentions;
 
   const [summaries, convos, users, stream, mentionItems, [{ unreadMentions }]] = await Promise.all([
-    getChannelSummaries(user.role),
-    getRecentJobConversations(14),
-    getActiveUsers(),
-    showMentions ? Promise.resolve([]) : getChannelMessages(channelKey),
-    showMentions ? getMentionsFor(user.id, user.role) : Promise.resolve([] as MentionItem[]),
+    getChannelSummaries(user.tenantId, user.role),
+    getRecentJobConversations(user.tenantId, 14),
+    getActiveUsers(user.tenantId),
+    showMentions ? Promise.resolve([]) : getChannelMessages(user.tenantId, channelKey),
+    showMentions ? getMentionsFor(user.tenantId, user.id, user.role) : Promise.resolve([] as MentionItem[]),
     db
       .select({ unreadMentions: count() })
       .from(notifications)
-      .where(and(eq(notifications.userId, user.id), eq(notifications.kind, "mention"), isNull(notifications.readAt))),
+      .where(
+          and(
+            eq(notifications.tenantId, user.tenantId),
+            eq(notifications.userId, user.id),
+            eq(notifications.kind, "mention"),
+            isNull(notifications.readAt),
+          ),
+        ),
   ]);
   const handles = new Set(users.map((u) => u.handle.toLowerCase()));
   const me = { handle: user.handle, role: user.role };

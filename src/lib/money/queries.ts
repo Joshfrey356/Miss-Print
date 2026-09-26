@@ -36,19 +36,19 @@ const isYm = (s: string | undefined | null): s is string => !!s && /^\d{4}-\d{2}
 // ---------------------------------------------------------------------------
 // Overview
 // ---------------------------------------------------------------------------
-export async function getOverview() {
+export async function getOverview(tenantId: number) {
   const now = today();
   const ym = now.slice(0, 7);
   const mStart = `${ym}-01`;
   const mEnd = monthEnd(ym);
   const sixStart = `${addMonths(ym, -5)}-01`;
-  const { rules } = await getSettings();
+  const { rules } = await getSettings(tenantId);
   const rate = rules.laborCostPerHourCents;
 
   const jobExp = db
     .select({ jobId: expenses.jobId, cents: sql<number>`sum(${expenses.amountCents})::int`.as("cents") })
     .from(expenses)
-    .where(and(isNull(expenses.archivedAt), isNotNull(expenses.jobId)))
+    .where(and(eq(expenses.tenantId, tenantId), isNull(expenses.archivedAt), isNotNull(expenses.jobId)))
     .groupBy(expenses.jobId)
     .as("je");
 
@@ -63,15 +63,15 @@ export async function getOverview() {
       .from(invoices)
       .leftJoin(jobs, eq(jobs.id, invoices.jobId))
       .leftJoin(jobExp, eq(jobExp.jobId, invoices.jobId))
-      .where(and(ne(invoices.status, "void"), gte(invoices.issueDate, mStart), lte(invoices.issueDate, mEnd))),
+      .where(and(eq(invoices.tenantId, tenantId), ne(invoices.status, "void"), gte(invoices.issueDate, mStart), lte(invoices.issueDate, mEnd))),
     db
       .select({ cents: sql<number>`coalesce(sum(${payments.amountCents}), 0)::int`, count: sql<number>`count(*)::int` })
       .from(payments)
-      .where(and(isNull(payments.voidedAt), gte(payments.receivedOn, mStart), lte(payments.receivedOn, mEnd))),
+      .where(and(eq(payments.tenantId, tenantId), isNull(payments.voidedAt), gte(payments.receivedOn, mStart), lte(payments.receivedOn, mEnd))),
     db
       .select({ cents: sql<number>`coalesce(sum(${expenses.amountCents}), 0)::int`, count: sql<number>`count(*)::int` })
       .from(expenses)
-      .where(and(isNull(expenses.archivedAt), gte(expenses.spentOn, mStart), lte(expenses.spentOn, mEnd))),
+      .where(and(eq(expenses.tenantId, tenantId), isNull(expenses.archivedAt), gte(expenses.spentOn, mStart), lte(expenses.spentOn, mEnd))),
     db
       .select({
         outstanding: sql<number>`coalesce(sum(${balanceSql}), 0)::int`,
@@ -80,26 +80,24 @@ export async function getOverview() {
         overdueCount: sql<number>`(count(*) filter (where ${invoices.dueDate} < ${now}))::int`,
       })
       .from(invoices)
-      .where(inArray(invoices.status, OPEN)),
+      .where(and(eq(invoices.tenantId, tenantId), inArray(invoices.status, OPEN))),
     db
       .select({ ym: sql<string>`to_char(${invoices.issueDate}, 'YYYY-MM')`, cents: sql<number>`sum(${invoices.subtotalCents})::int` })
       .from(invoices)
-      .where(and(ne(invoices.status, "void"), gte(invoices.issueDate, sixStart)))
+      .where(and(eq(invoices.tenantId, tenantId), ne(invoices.status, "void"), gte(invoices.issueDate, sixStart)))
       .groupBy(sql`1`),
     db
       .select({ ym: sql<string>`to_char(${expenses.spentOn}, 'YYYY-MM')`, cents: sql<number>`sum(${expenses.amountCents})::int` })
       .from(expenses)
-      .where(and(isNull(expenses.archivedAt), gte(expenses.spentOn, sixStart)))
+      .where(and(eq(expenses.tenantId, tenantId), isNull(expenses.archivedAt), gte(expenses.spentOn, sixStart)))
       .groupBy(sql`1`),
-    openInvoicesQuery()
-      .where(and(inArray(invoices.status, OPEN), sql`${invoices.dueDate} < ${now}`))
+    openInvoicesQuery(tenantId, and(inArray(invoices.status, OPEN), sql`${invoices.dueDate} < ${now}`))
       .orderBy(asc(invoices.dueDate))
       .limit(8),
-    openInvoicesQuery()
-      .where(and(inArray(invoices.status, OPEN), gte(invoices.dueDate, now), lte(invoices.dueDate, addDays(now, 7))))
+    openInvoicesQuery(tenantId, and(inArray(invoices.status, OPEN), gte(invoices.dueDate, now), lte(invoices.dueDate, addDays(now, 7))))
       .orderBy(asc(invoices.dueDate))
       .limit(8),
-    getUninvoicedJobs(),
+    getUninvoicedJobs(tenantId),
   ]);
 
   const months = Array.from({ length: 6 }, (_, i) => {
@@ -132,7 +130,7 @@ export async function getOverview() {
   };
 }
 
-function openInvoicesQuery() {
+function openInvoicesQuery(tenantId: number, where: SQL | undefined) {
   return db
     .select({
       id: invoices.id,
@@ -148,11 +146,12 @@ function openInvoicesQuery() {
     .from(invoices)
     .innerJoin(customers, eq(customers.id, invoices.customerId))
     .leftJoin(jobs, eq(jobs.id, invoices.jobId))
+    .where(and(eq(invoices.tenantId, tenantId), where))
     .$dynamic();
 }
 
 /** Jobs that are done (or about to be handed over) but have no active invoice. */
-export async function getUninvoicedJobs(limit = 20) {
+export async function getUninvoicedJobs(tenantId: number, limit = 20) {
   return db
     .select({
       id: jobs.id,
@@ -168,6 +167,7 @@ export async function getUninvoicedJobs(limit = 20) {
     .innerJoin(customers, eq(customers.id, jobs.customerId))
     .where(
       and(
+        eq(jobs.tenantId, tenantId),
         isNull(jobs.archivedAt),
         inArray(jobs.status, ["completed", "ready_pickup", "scheduled_delivery", "scheduled_install"]),
         sql`(${jobs.status} <> 'completed' or ${jobs.completedAt} >= now() - interval '60 days')`,
@@ -185,8 +185,8 @@ export const INVOICE_FILTERS = ["unpaid", "overdue", "paid", "void", "all"] as c
 export type InvoiceFilter = (typeof INVOICE_FILTERS)[number];
 export type InvoiceListParams = { q?: string; status?: string; sort?: string; dir?: string; page?: string; from?: string; to?: string };
 
-function invoiceWhere(p: InvoiceListParams, now = today()) {
-  const conds: SQL[] = [];
+function invoiceWhere(tenantId: number, p: InvoiceListParams, now = today()) {
+  const conds: SQL[] = [eq(invoices.tenantId, tenantId)];
   const status = (INVOICE_FILTERS as readonly string[]).includes(p.status ?? "") ? (p.status as InvoiceFilter) : "all";
   if (status === "unpaid") conds.push(inArray(invoices.status, OPEN));
   if (status === "overdue") conds.push(and(inArray(invoices.status, OPEN), sql`${invoices.dueDate} < ${now}`)!);
@@ -200,7 +200,7 @@ function invoiceWhere(p: InvoiceListParams, now = today()) {
     if (n) conds.push(or(eq(invoices.number, Number(n[1])), eq(jobs.number, Number(n[1])))!);
     else conds.push(or(ilike(customers.name, likeEsc(q)), ilike(invoices.poNumber, likeEsc(q)), ilike(jobs.title, likeEsc(q)))!);
   }
-  return { where: conds.length ? and(...conds) : undefined, status };
+  return { where: and(...conds), status };
 }
 
 const INVOICE_SORTS = {
@@ -212,8 +212,8 @@ const INVOICE_SORTS = {
   balance: balanceSql,
 } as const;
 
-export async function listInvoices(p: InvoiceListParams, opts: { all?: boolean } = {}) {
-  const { where, status } = invoiceWhere(p);
+export async function listInvoices(tenantId: number, p: InvoiceListParams, opts: { all?: boolean } = {}) {
+  const { where, status } = invoiceWhere(tenantId, p);
   const sortKey = (p.sort && Object.hasOwn(INVOICE_SORTS, p.sort) ? p.sort : "number") as keyof typeof INVOICE_SORTS;
   const dir = p.dir === "asc" ? asc : desc;
   const page = pageOf(p.page);
@@ -252,17 +252,18 @@ export async function listInvoices(p: InvoiceListParams, opts: { all?: boolean }
   return { rows, total: agg!.total, sumTotal: agg!.sum, sumBalance: agg!.balance, page, status, sort: sortKey, dir: p.dir === "asc" ? "asc" : "desc" };
 }
 
-export async function invoiceFilterCounts(now = today()) {
+export async function invoiceFilterCounts(tenantId: number, now = today()) {
   const [r] = await db
     .select({
       unpaid: sql<number>`(count(*) filter (where ${invoices.status} in ('sent','partial')))::int`,
       overdue: sql<number>`(count(*) filter (where ${invoices.status} in ('sent','partial') and ${invoices.dueDate} < ${now}))::int`,
     })
-    .from(invoices);
+    .from(invoices)
+    .where(eq(invoices.tenantId, tenantId));
   return r!;
 }
 
-export async function getInvoiceDetail(id: number) {
+export async function getInvoiceDetail(tenantId: number, id: number) {
   const [row] = await db
     .select({
       inv: invoices,
@@ -274,28 +275,28 @@ export async function getInvoiceDetail(id: number) {
     .innerJoin(customers, eq(customers.id, invoices.customerId))
     .leftJoin(jobs, eq(jobs.id, invoices.jobId))
     .leftJoin(users, eq(users.id, invoices.createdBy))
-    .where(eq(invoices.id, id));
+    .where(and(eq(invoices.tenantId, tenantId), eq(invoices.id, id)));
   if (!row) return null;
   const [items, pays, reminders, hasContactEmail] = await Promise.all([
-    db.select().from(invoiceItems).where(eq(invoiceItems.invoiceId, id)).orderBy(asc(invoiceItems.sortOrder), asc(invoiceItems.id)),
+    db.select().from(invoiceItems).where(and(eq(invoiceItems.tenantId, tenantId), eq(invoiceItems.invoiceId, id))).orderBy(asc(invoiceItems.sortOrder), asc(invoiceItems.id)),
     db
       .select({ p: payments, recordedByName: users.name })
       .from(payments)
       .leftJoin(users, eq(users.id, payments.recordedBy))
-      .where(eq(payments.invoiceId, id))
+      .where(and(eq(payments.tenantId, tenantId), eq(payments.invoiceId, id)))
       .orderBy(desc(payments.receivedOn), desc(payments.id)),
     db
       .select({ id: communications.id, createdAt: communications.createdAt, toAddress: communications.toAddress, status: communications.status, sentByName: users.name })
       .from(communications)
       .leftJoin(users, eq(users.id, communications.sentBy))
-      .where(and(eq(communications.invoiceId, id), eq(communications.template, "payment_reminder")))
+      .where(and(eq(communications.tenantId, tenantId), eq(communications.invoiceId, id), eq(communications.template, "payment_reminder")))
       .orderBy(desc(communications.createdAt)),
     row.customer.email
       ? Promise.resolve(true)
       : db
           .select({ id: customerContacts.id })
           .from(customerContacts)
-          .where(and(eq(customerContacts.customerId, row.customer.id), isNull(customerContacts.archivedAt), isNotNull(customerContacts.email)))
+          .where(and(eq(customerContacts.tenantId, tenantId), eq(customerContacts.customerId, row.customer.id), isNull(customerContacts.archivedAt), isNotNull(customerContacts.email)))
           .limit(1)
           .then((r) => r.length > 0),
   ]);
@@ -305,9 +306,12 @@ export async function getInvoiceDetail(id: number) {
     .from(activityLogs)
     .leftJoin(users, eq(users.id, activityLogs.actorId))
     .where(
-      or(
-        and(eq(activityLogs.entityType, "invoice"), eq(activityLogs.entityId, id)),
-        paymentIds.length ? and(eq(activityLogs.entityType, "payment"), inArray(activityLogs.entityId, paymentIds)) : undefined,
+      and(
+        eq(activityLogs.tenantId, tenantId),
+        or(
+          and(eq(activityLogs.entityType, "invoice"), eq(activityLogs.entityId, id)),
+          paymentIds.length ? and(eq(activityLogs.entityType, "payment"), inArray(activityLogs.entityId, paymentIds)) : undefined,
+        ),
       ),
     )
     .orderBy(desc(activityLogs.createdAt), desc(activityLogs.id))
@@ -321,8 +325,8 @@ export async function getInvoiceDetail(id: number) {
 export type PaymentListParams = { method?: string; from?: string; to?: string; q?: string; page?: string; voided?: string };
 const METHODS: PaymentMethod[] = ["cash", "check", "card", "ach", "other"];
 
-export async function listPayments(p: PaymentListParams, opts: { all?: boolean } = {}) {
-  const conds: SQL[] = [];
+export async function listPayments(tenantId: number, p: PaymentListParams, opts: { all?: boolean } = {}) {
+  const conds: SQL[] = [eq(payments.tenantId, tenantId)];
   if (p.method && METHODS.includes(p.method as PaymentMethod)) conds.push(eq(payments.method, p.method as PaymentMethod));
   if (isYmd(p.from)) conds.push(gte(payments.receivedOn, p.from));
   if (isYmd(p.to)) conds.push(lte(payments.receivedOn, p.to));
@@ -332,7 +336,6 @@ export async function listPayments(p: PaymentListParams, opts: { all?: boolean }
     const n = q.match(/^(?:inv)?[-\s#]?(\d{3,7})$/i);
     conds.push(or(ilike(customers.name, likeEsc(q)), ilike(payments.reference, likeEsc(q)), n ? eq(invoices.number, Number(n[1])) : undefined)!);
   }
-  const where = conds.length ? and(...conds) : undefined;
   const page = pageOf(p.page);
   const rows = await db
     .select({
@@ -353,7 +356,7 @@ export async function listPayments(p: PaymentListParams, opts: { all?: boolean }
     .innerJoin(invoices, eq(invoices.id, payments.invoiceId))
     .innerJoin(customers, eq(customers.id, payments.customerId))
     .leftJoin(users, eq(users.id, payments.recordedBy))
-    .where(where)
+    .where(and(...conds))
     .orderBy(desc(payments.receivedOn), desc(payments.id))
     .limit(opts.all ? 20000 : PAGE_SIZE)
     .offset(opts.all ? 0 : (page - 1) * PAGE_SIZE);
@@ -362,7 +365,7 @@ export async function listPayments(p: PaymentListParams, opts: { all?: boolean }
     .from(payments)
     .innerJoin(invoices, eq(invoices.id, payments.invoiceId))
     .innerJoin(customers, eq(customers.id, payments.customerId))
-    .where(where);
+    .where(and(...conds));
   return { rows, total: agg!.total, sum: agg!.sum, page };
 }
 
@@ -371,8 +374,8 @@ export async function listPayments(p: PaymentListParams, opts: { all?: boolean }
 // ---------------------------------------------------------------------------
 export type ExpenseListParams = { category?: string; month?: string; attributed?: string; q?: string; page?: string; from?: string; to?: string };
 
-export async function listExpenses(p: ExpenseListParams, opts: { all?: boolean; categories: readonly ExpenseCategory[] }) {
-  const conds: SQL[] = [isNull(expenses.archivedAt)];
+export async function listExpenses(tenantId: number, p: ExpenseListParams, opts: { all?: boolean; categories: readonly ExpenseCategory[] }) {
+  const conds: SQL[] = [eq(expenses.tenantId, tenantId), isNull(expenses.archivedAt)];
   if (p.category && opts.categories.includes(p.category as ExpenseCategory)) conds.push(eq(expenses.category, p.category as ExpenseCategory));
   if (isYm(p.month)) conds.push(gte(expenses.spentOn, `${p.month}-01`), lte(expenses.spentOn, monthEnd(p.month)));
   if (isYmd(p.from)) conds.push(gte(expenses.spentOn, p.from));
@@ -384,7 +387,6 @@ export async function listExpenses(p: ExpenseListParams, opts: { all?: boolean; 
     const n = q.match(/^(?:mp)?[-\s#]?(\d{4,7})$/i);
     conds.push(or(ilike(expenses.vendorName, likeEsc(q)), ilike(expenses.notes, likeEsc(q)), n ? eq(jobs.number, Number(n[1])) : undefined)!);
   }
-  const where = and(...conds);
   const page = pageOf(p.page);
   const base = db
     .select({
@@ -405,7 +407,7 @@ export async function listExpenses(p: ExpenseListParams, opts: { all?: boolean; 
     .from(expenses)
     .leftJoin(jobs, eq(jobs.id, expenses.jobId))
     .leftJoin(files, eq(files.id, expenses.receiptFileId))
-    .where(where)
+    .where(and(...conds))
     .orderBy(desc(expenses.spentOn), desc(expenses.id))
     .$dynamic();
   const rows = opts.all ? await base.limit(20000) : await base.limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE);
@@ -413,25 +415,25 @@ export async function listExpenses(p: ExpenseListParams, opts: { all?: boolean; 
     .select({ total: sql<number>`count(*)::int`, sum: sql<number>`coalesce(sum(${expenses.amountCents}), 0)::int` })
     .from(expenses)
     .leftJoin(jobs, eq(jobs.id, expenses.jobId))
-    .where(where);
+    .where(and(...conds));
   return { rows, total: agg!.total, sum: agg!.sum, page };
 }
 
-export async function getExpense(id: number) {
+export async function getExpense(tenantId: number, id: number) {
   const [row] = await db
     .select({ e: expenses, jobNumber: jobs.number, jobTitle: jobs.title, receiptName: files.filename, createdByName: users.name })
     .from(expenses)
     .leftJoin(jobs, eq(jobs.id, expenses.jobId))
     .leftJoin(files, eq(files.id, expenses.receiptFileId))
     .leftJoin(users, eq(users.id, expenses.createdBy))
-    .where(and(eq(expenses.id, id), isNull(expenses.archivedAt)));
+    .where(and(eq(expenses.tenantId, tenantId), eq(expenses.id, id), isNull(expenses.archivedAt)));
   return row ?? null;
 }
 
 // ---------------------------------------------------------------------------
 // Receivables (AR aging)
 // ---------------------------------------------------------------------------
-export async function getReceivables() {
+export async function getReceivables(tenantId: number) {
   return db
     .select({
       id: invoices.id,
@@ -451,7 +453,7 @@ export async function getReceivables() {
     .from(invoices)
     .innerJoin(customers, eq(customers.id, invoices.customerId))
     .leftJoin(jobs, eq(jobs.id, invoices.jobId))
-    .where(and(inArray(invoices.status, OPEN), sql`${invoices.totalCents} > ${invoices.paidCents}`))
+    .where(and(eq(invoices.tenantId, tenantId), inArray(invoices.status, OPEN), sql`${invoices.totalCents} > ${invoices.paidCents}`))
     .orderBy(asc(invoices.dueDate), asc(invoices.number))
     .limit(2000);
 }
@@ -479,8 +481,8 @@ export type ProfitRow = {
 export type CategoryProfit = { categoryName: string; jobs: number; revenue: number; cost: number; margin: number | null; quotedMargin: number | null; lowCount: number };
 export const PROFIT_SORTS = ["margin", "revenue", "profit", "completed", "quoted"] as const;
 
-export async function getProfitability(p: { from: string; to: string; sort?: string; dir?: string; page?: string; low?: string }) {
-  const { rules } = await getSettings();
+export async function getProfitability(tenantId: number, p: { from: string; to: string; sort?: string; dir?: string; page?: string; low?: string }) {
+  const { rules } = await getSettings(tenantId);
   const rate = rules.laborCostPerHourCents;
   const sort = (PROFIT_SORTS as readonly string[]).includes(p.sort ?? "") ? p.sort! : "margin";
   const dir = p.dir === "desc" ? "desc" : p.dir === "asc" ? "asc" : sort === "margin" ? "asc" : "desc";
@@ -497,10 +499,10 @@ export async function getProfitability(p: { from: string; to: string; sort?: str
   const base = sql`
     with je as (
       select job_id, sum(amount_cents)::int as cents from ${expenses}
-      where archived_at is null and job_id is not null group by job_id
+      where tenant_id = ${tenantId} and archived_at is null and job_id is not null group by job_id
     ), ji as (
       select job_id, sum(subtotal_cents)::int as subtotal from ${invoices}
-      where status <> 'void' and job_id is not null group by job_id
+      where tenant_id = ${tenantId} and status <> 'void' and job_id is not null group by job_id
     ), base as (
       select j.id, j.number, j.title, j.customer_id, c.name as customer_name, pc.name as category_name,
         ((j.completed_at at time zone 'America/Chicago')::date)::text as completed_on,
@@ -514,7 +516,7 @@ export async function getProfitability(p: { from: string; to: string; sort?: str
       left join ${productCategories} pc on pc.id = j.category_id
       left join je on je.job_id = j.id
       left join ji on ji.job_id = j.id
-      where j.status = 'completed' and j.archived_at is null
+      where j.tenant_id = ${tenantId} and j.status = 'completed' and j.archived_at is null
         and (j.completed_at at time zone 'America/Chicago')::date between ${p.from}::date and ${p.to}::date
     ), calc as (
       select *, (expense_cost + labor_cost) as actual_cost,

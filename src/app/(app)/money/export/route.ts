@@ -5,6 +5,7 @@ import { invoiceNo, jobNo, today } from "@/lib/format";
 import { listExpenses, listInvoices, listPayments } from "@/lib/money/queries";
 import { EXPENSE_CATEGORIES, EXPENSE_CATEGORY_LABELS, expensePaymentLabel, PAYMENT_METHOD_LABELS } from "@/lib/money/labels";
 import { csvMoney, toCsv } from "@/lib/money/csv";
+import { getTenant } from "@/lib/tenant";
 
 const STATUS: Record<string, string> = { draft: "Draft", sent: "Unpaid", partial: "Partially paid", paid: "Paid", void: "Void" };
 
@@ -20,7 +21,7 @@ export async function GET(req: Request) {
   let csv: string;
 
   if (type === "invoices") {
-    const { rows } = await listInvoices(params, { all: true });
+    const { rows } = await listInvoices(user.tenantId, params, { all: true });
     csv = toCsv(
       ["Invoice", "Customer", "Job", "Job title", "PO", "Issue date", "Due date", "Status", "Subtotal", "Tax", "Total", "Paid", "Balance", "QuickBooks ID"],
       rows.map((r) => [
@@ -41,7 +42,7 @@ export async function GET(req: Request) {
       ]),
     );
   } else if (type === "expenses") {
-    const { rows } = await listExpenses(params, { all: true, categories: EXPENSE_CATEGORIES });
+    const { rows } = await listExpenses(user.tenantId, params, { all: true, categories: EXPENSE_CATEGORIES });
     csv = toCsv(
       ["Date", "Vendor", "Category", "Amount", "Job", "Job title", "Paid with", "Notes", "Receipt", "QuickBooks ID"],
       rows.map((r) => [
@@ -58,7 +59,7 @@ export async function GET(req: Request) {
       ]),
     );
   } else if (type === "payments") {
-    const { rows } = await listPayments(params, { all: true });
+    const { rows } = await listPayments(user.tenantId, params, { all: true });
     csv = toCsv(
       ["Received", "Customer", "Invoice", "Method", "Reference", "Amount", "Voided", "Notes"],
       rows.map((r) => [r.receivedOn, r.customerName, invoiceNo(r.invoiceNumber), PAYMENT_METHOD_LABELS[r.method], r.reference ?? "", csvMoney(r.amountCents), r.voidedAt ? "Yes" : "", r.notes ?? ""]),
@@ -67,10 +68,11 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Unknown export type" }, { status: 400 });
   }
 
+  const shop = await getTenant(user.tenantId);
   return new NextResponse(csv, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="miss-print-${type}-${now}.csv"`,
+      "Content-Disposition": `attachment; filename="${shop?.slug ?? "shop"}-${type}-${now}.csv"`,
       "Cache-Control": "no-store",
     },
   });

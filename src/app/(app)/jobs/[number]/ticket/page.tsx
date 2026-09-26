@@ -15,7 +15,7 @@ export default async function TicketPage({ params }: { params: Promise<{ number:
   if (!number) notFound();
   const d = await getJobDetail(number, { ...user, role: "production" });
   if (!d) notFound();
-  const people = await getUsers();
+  const people = await getUsers(user.tenantId);
   const name = (id: number | null) => people.find((p) => p.id === id)?.name ?? "—";
   const { job } = d;
   const approved = d.proofs.find((p) => p.proof.status === "approved");

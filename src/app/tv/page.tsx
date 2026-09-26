@@ -1,6 +1,8 @@
 import { requirePagePermission } from "@/lib/auth";
 import { boardJobs } from "@/lib/jobs/queries";
 import { today } from "@/lib/format";
+import { getLocations } from "@/lib/lookups";
+import { getBrand } from "@/lib/brand";
 import { TvBoard } from "./tv-board";
 
 export const metadata = { title: "Production TV" };
@@ -13,7 +15,8 @@ export const dynamic = "force-dynamic";
 export default async function TvPage({ searchParams }: { searchParams: Promise<{ location?: string }> }) {
   const user = await requirePagePermission("jobs.view");
   const { location } = await searchParams;
-  const all = (await boardJobs({ ...user, role: "production" })).filter((j) => j.status !== "completed" && (!location || j.locationCode === location));
+  const [board, locations, brand] = await Promise.all([boardJobs({ ...user, role: "production" }), getLocations(user.tenantId), getBrand(user.tenantId)]);
+  const all = board.filter((j) => j.status !== "completed" && (!location || j.locationCode === location));
   const t = today();
   const strip = (j: (typeof all)[number]) => ({
     id: j.id,
@@ -28,13 +31,15 @@ export default async function TvPage({ searchParams }: { searchParams: Promise<{
     ownerColor: j.ownerColor,
     locationCode: j.locationCode,
     locationName: j.locationName,
+    locationIndex: j.locationIndex,
     itemSummary: j.itemSummary,
     hasArtwork: j.hasArtwork,
   });
   const jobs = all.map(strip);
   return (
     <TvBoard
-      location={location ?? null}
+      brand={brand}
+      location={location ? (locations.find((l) => l.code === location)?.name ?? location) : null}
       dueToday={jobs.filter((j) => j.overdue || j.dueDate === t)}
       rush={jobs.filter((j) => j.priority !== "normal")}
       printing={jobs.filter((j) => ["production", "finishing", "quality_check"].includes(j.status))}

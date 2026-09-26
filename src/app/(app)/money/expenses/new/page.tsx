@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { CheckCircle2 } from "lucide-react";
 import { requirePagePermission } from "@/lib/auth";
 import { can } from "@/lib/permissions";
@@ -23,11 +23,11 @@ export default async function NewExpensePage({ searchParams }: { searchParams: P
   const jobNumParam = one("job") ? parseJobNumber(one("job")!) : null;
   const [job] =
     Number.isInteger(jobIdParam) && jobIdParam > 0
-      ? await db.select({ number: jobs.number, title: jobs.title }).from(jobs).where(eq(jobs.id, jobIdParam))
+      ? await db.select({ number: jobs.number, title: jobs.title }).from(jobs).where(and(eq(jobs.tenantId, user.tenantId), eq(jobs.id, jobIdParam)))
       : jobNumParam
-        ? await db.select({ number: jobs.number, title: jobs.title }).from(jobs).where(eq(jobs.number, jobNumParam))
+        ? await db.select({ number: jobs.number, title: jobs.title }).from(jobs).where(and(eq(jobs.tenantId, user.tenantId), eq(jobs.number, jobNumParam)))
         : [];
-  const vendors = await getVendorSuggestions();
+  const vendors = await getVendorSuggestions(user.tenantId);
   const fromJob = !!job;
   const cancelHref = fromJob ? `/jobs/${job.number}?tab=money` : can(user.role, "money.view") ? "/money?tab=expenses" : "/dashboard";
 

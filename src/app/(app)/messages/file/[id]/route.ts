@@ -16,9 +16,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   if (!can(user.role, "messages.use")) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const { id } = await ctx.params;
-  const row = await getFileRow(Number(id));
+  const row = await getFileRow(user.tenantId, Number(id));
   if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  if (!(await channelFileVisible(row.id, user.role))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!(await channelFileVisible(user.tenantId, row.id, user.role))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   let data: Buffer;
   try {
     data = await storage().get(row.storageKey);
