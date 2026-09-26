@@ -21,6 +21,8 @@ export async function runMigrations() {
     // Trigram search indexes need pg_trgm (available on Supabase/Neon/RDS).
     await client`CREATE EXTENSION IF NOT EXISTS pg_trgm`;
     await migrate(drizzle(client), { migrationsFolder: path.join(process.cwd(), "drizzle") });
+    // Keep every table (including ones added later) closed to Supabase's public Data API.
+    await client.unsafe(`DO $$ DECLARE r record; BEGIN FOR r IN SELECT schemaname, tablename FROM pg_tables WHERE schemaname = 'public' AND NOT rowsecurity LOOP EXECUTE format('ALTER TABLE %I.%I ENABLE ROW LEVEL SECURITY', r.schemaname, r.tablename); END LOOP; END $$`);
   } finally {
     await client.end({ timeout: 5 });
   }
