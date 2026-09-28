@@ -11,6 +11,8 @@ import { Table, Td, Th, THead, Tr } from "@/components/ui/table";
 import { EQUIPMENT_KIND_HINTS, EQUIPMENT_KIND_LABELS, isPress, type EquipmentKind } from "@/lib/estimating/catalog-forms";
 import { fmtInches, fmtMoney, fmtRate, fmtSheet, parseRateCents, pctToInput, rateToInput } from "@/lib/estimating/parse";
 import { centsToInput } from "@/lib/format";
+import { capacityLabel } from "@/lib/schedule/logic";
+import { WEEKDAY_SHORT } from "@/lib/schedule/time";
 import { cn } from "@/lib/utils";
 import { ActionForm, SaveButton } from "../_components/action-form";
 import { SuffixInput } from "../_components/inputs";
@@ -45,6 +47,9 @@ export type Machine = {
   setupSpoilageSheets: number;
   runSpoilagePct: number;
   notes: string | null;
+  /** Scheduling: hours a work day and which days (0 = Sunday … 6 = Saturday). */
+  hoursPerDay: number;
+  workDays: number[];
   active: boolean;
 };
 
@@ -126,6 +131,7 @@ export function EquipmentList({
               <tr>
                 <Th>Machine</Th>
                 <Th className="hidden md:table-cell">For estimating</Th>
+                <Th className="hidden sm:table-cell">Runs</Th>
                 <Th className="hidden lg:table-cell">Location</Th>
                 <Th aria-label="Actions" />
               </tr>
@@ -140,8 +146,10 @@ export function EquipmentList({
                       {!m.active && <Badge>Turned off</Badge>}
                     </div>
                     <p className="text-sm text-slate-500 md:hidden">{summary(m)}</p>
+                    <p className="text-sm text-slate-500 sm:hidden">Runs {capacityLabel(m)}</p>
                   </Td>
                   <Td className="hidden text-slate-700 md:table-cell">{summary(m)}</Td>
+                  <Td className="hidden text-sm whitespace-nowrap text-slate-700 sm:table-cell">{capacityLabel(m)}</Td>
                   <Td className="hidden lg:table-cell">{m.locationName ?? "—"}</Td>
                   <Td className="w-px">
                     <RowActions
@@ -347,6 +355,26 @@ function EquipmentDialog({
             </Section>
 
             </div>
+
+            <Section title="Schedule" hint="When this machine runs, for the equipment schedule. Work days start at 8:00 am.">
+              <input type="hidden" name="scheduleFields" value="1" />
+              <Field label="Hours per work day" htmlFor="e-hpd" hint="8 for one shift, 16 for two, 24 around the clock.">
+                <SuffixInput id="e-hpd" name="hoursPerDay" suffix="hr" defaultValue={String(m?.hoursPerDay ?? 8)} />
+              </Field>
+              <fieldset>
+                <legend className="mb-1.5 text-sm font-medium text-slate-700">Work days</legend>
+                <div className="flex flex-wrap gap-1.5">
+                  {WEEKDAY_SHORT.map((label, day) => (
+                    <label key={day} className="cursor-pointer">
+                      <input type="checkbox" name="workDays" value={day} defaultChecked={(m?.workDays ?? [1, 2, 3, 4, 5]).includes(day)} className="peer sr-only" />
+                      <span className="inline-flex h-10 w-12 items-center justify-center rounded-lg border border-slate-300 bg-white text-sm font-medium text-slate-600 peer-checked:border-brand-500 peer-checked:bg-brand-50 peer-checked:text-brand-700 peer-focus-visible:ring-2 peer-focus-visible:ring-brand-500/40">
+                        {label}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            </Section>
 
             <Field label="Notes" htmlFor="e-notes">
               <Textarea id="e-notes" name="notes" rows={2} defaultValue={m?.notes ?? ""} placeholder="Service contract, quirks, what it's best for…" />

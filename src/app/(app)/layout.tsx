@@ -13,6 +13,7 @@ import { SearchButton } from "@/components/shell/command-palette";
 import { NotificationBell } from "@/components/shell/notification-bell";
 import { UserMenu } from "@/components/shell/user-menu";
 import { ShopProvider } from "@/components/shop-context";
+import { getPortalRequestCounts } from "@/lib/portal/staff";
 
 /** White-label the browser tab: "<page> · <shop name>", with the shop's logo as the icon. */
 export async function generateMetadata(): Promise<Metadata> {
@@ -33,7 +34,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const allowed: NavKey[] = ["dashboard"];
   if (can(r, "jobs.view")) allowed.push("jobs");
   if (can(r, "quotes.view")) allowed.push("quotes");
-  if (can(r, "customers.view")) allowed.push("customers");
+  if (can(r, "customers.view")) allowed.push("customers", "requests");
   if (can(r, "calendar.view")) allowed.push("calendar");
   if (can(r, "schedule.edit") || can(r, "dashboard.company")) allowed.push("schedule");
   if (can(r, "messages.use")) allowed.push("messages");
@@ -47,6 +48,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     customer: can(r, "customers.edit"),
     expense: can(r, "expenses.edit"),
   };
+  const portalRequests = can(r, "customers.view") ? await getPortalRequestCounts(user.tenantId) : { new: 0 };
   const [{ unread }] = await db
     .select({ unread: count() })
     .from(notifications)
@@ -61,7 +63,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <Logo brand={brand} />
         </Link>
         <div className="flex-1 overflow-y-auto px-3">
-          <SidebarNav allowed={allowed} />
+          <SidebarNav allowed={allowed} badges={{ requests: portalRequests.new }} />
         </div>
         <div className="border-t border-slate-100 p-3">
           <UserMenu name={user.name} color={user.color} roleLabel={ROLE_LABELS[user.role]} isAdmin={can(r, "settings.manage")} />

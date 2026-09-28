@@ -63,6 +63,9 @@ export function dayTotals(payments: { method: string; amountCents: number; voide
   return { totals, counts, allCents, expectedCashCents: totals.cash ?? 0 };
 }
 
+/** Cash that should be in the drawer at closing: the starting cash (float) plus the day's cash payments. */
+export const expectedDrawer = (openingFloatCents: number, cashTakenCents: number) => Math.max(0, Math.round(openingFloatCents)) + cashTakenCents;
+
 /** Counted − expected: positive = over, negative = short. */
 export const overShort = (countedCents: number, expectedCents: number) => countedCents - expectedCents;
 

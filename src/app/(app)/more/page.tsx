@@ -2,6 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { and, count, eq, isNull } from "drizzle-orm";
 import {
+  CalendarClock,
+  Inbox,
+  Package,
+  Store,
   BarChart3,
   Bell,
   BookOpen,
@@ -48,10 +52,15 @@ export default async function MorePage() {
     { href: "/notifications", label: "Notifications", hint: unread ? `${unread} unread` : "All caught up", icon: Bell, badge: unread, tone: "bg-red-50 text-red-600" },
     { href: "/quotes", label: "Quotes", hint: "Prices for customers", icon: FileText, perm: "quotes.view", tone: "bg-violet-50 text-violet-600" },
     { href: "/customers", label: "Customers", hint: "Contacts & history", icon: Users, perm: "customers.view", tone: "bg-sky-50 text-sky-600" },
+    { href: "/requests", label: "Requests", hint: "From the customer portal", icon: Inbox, perm: "customers.view", tone: "bg-sky-50 text-sky-600" },
+    { href: "/counter", label: "Counter", hint: "Walk-in sales & payments", icon: Store, perm: "counter.use", tone: "bg-emerald-50 text-emerald-700" },
+    { href: "/schedule", label: "Schedule", hint: "What runs on each machine", icon: CalendarClock, perm: "schedule.edit", tone: "bg-indigo-50 text-indigo-600" },
+    { href: "/inventory", label: "Inventory", hint: "Paper & stock, orders", icon: Package, perm: "inventory.view", tone: "bg-amber-50 text-amber-700" },
     { href: "/money", label: "Money", hint: "Invoices & payments", icon: DollarSign, perm: "money.view", tone: "bg-green-50 text-green-700" },
     { href: "/reports", label: "Reports", hint: "How we're doing", icon: BarChart3, perm: "reports.basic", tone: "bg-orange-50 text-orange-600" },
     { href: "/knowledge", label: "Knowledge", hint: "How-tos & checklists", icon: BookOpen, tone: "bg-amber-50 text-amber-700" },
     { href: "/tv", label: "Production TV", hint: "Shop-floor screen", icon: Tv, perm: "jobs.view", tone: "bg-slate-100 text-slate-700" },
+    { href: "/tv?view=machines", label: "Machines TV", hint: "Today on each machine", icon: Tv, perm: "jobs.view", tone: "bg-slate-100 text-slate-700" },
     { href: "/settings/profile", label: "My profile", hint: "Password & notifications", icon: SlidersHorizontal, tone: "bg-brand-50 text-brand-600" },
     { href: "/settings", label: "Settings", hint: "Business rules & team", icon: Settings, perm: "settings.manage", tone: "bg-slate-100 text-slate-700" },
   ];

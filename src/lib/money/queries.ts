@@ -18,6 +18,7 @@ import {
   type PaymentMethod,
 } from "@/lib/db/schema";
 import { addDays, parseNumberInput, today } from "@/lib/format";
+import { jobPurchaseCostsSql } from "@/lib/inventory/cost-sql";
 import { getJobPrefix } from "@/lib/tenant";
 import { getSettings } from "@/lib/settings";
 import { addMonths, LOW_MARGIN, monthEnd } from "./labels";
@@ -478,6 +479,8 @@ export type ProfitRow = {
   quotedRevenue: number;
   estCost: number;
   expenseCost: number;
+  /** Purchase orders charged to the job + stock used on it (src/lib/inventory/cost-sql.ts). */
+  purchaseCost: number;
   laborCost: number;
   actualCost: number;
   quotedMargin: number | null;
@@ -502,7 +505,7 @@ export async function getProfitability(tenantId: number, p: { from: string; to: 
   }[sort as (typeof PROFIT_SORTS)[number]];
 
   const base = sql`
-    with je as (
+    with jpc as (${jobPurchaseCostsSql(tenantId)}), je as (
       select job_id, sum(amount_cents)::int as cents from ${expenses}
       where tenant_id = ${tenantId} and archived_at is null and job_id is not null group by job_id
     ), ji as (
@@ -515,18 +518,20 @@ export async function getProfitability(tenantId: number, p: { from: string; to: 
         j.subtotal_cents::int as quoted_revenue,
         j.estimated_cost_cents::int as est_cost,
         coalesce(je.cents, 0)::int as expense_cost,
+        coalesce(jpc.stock_cents + jpc.purchased_material_cents + jpc.po_outside_cents, 0)::int as purchase_cost,
         round(coalesce(j.labor_hours, 0) * ${rate})::int as labor_cost
       from ${jobs} j
       join ${customers} c on c.id = j.customer_id
       left join ${productCategories} pc on pc.id = j.category_id
       left join je on je.job_id = j.id
       left join ji on ji.job_id = j.id
+      left join jpc on jpc.job_id = j.id
       where j.tenant_id = ${tenantId} and j.status = 'completed' and j.archived_at is null
         and (j.completed_at at time zone 'America/Chicago')::date between ${p.from}::date and ${p.to}::date
     ), calc as (
-      select *, (expense_cost + labor_cost) as actual_cost,
+      select *, (expense_cost + purchase_cost + labor_cost) as actual_cost,
         case when quoted_revenue > 0 then (quoted_revenue - est_cost)::float8 / quoted_revenue end as quoted_margin,
-        case when revenue > 0 and (expense_cost + labor_cost) > 0 then (revenue - expense_cost - labor_cost)::float8 / revenue end as actual_margin
+        case when revenue > 0 and (expense_cost + purchase_cost + labor_cost) > 0 then (revenue - expense_cost - purchase_cost - labor_cost)::float8 / revenue end as actual_margin
       from base
     )`;
 
@@ -535,7 +540,7 @@ export async function getProfitability(tenantId: number, p: { from: string; to: 
     db.execute(sql`${base}
       select id, number, title, customer_id as "customerId", customer_name as "customerName", category_name as "categoryName",
         completed_on as "completedOn", revenue, quoted_revenue as "quotedRevenue", est_cost as "estCost",
-        expense_cost as "expenseCost", labor_cost as "laborCost", actual_cost as "actualCost",
+        expense_cost as "expenseCost", purchase_cost as "purchaseCost", labor_cost as "laborCost", actual_cost as "actualCost",
         quoted_margin as "quotedMargin", actual_margin as "actualMargin"
       from calc ${lowSql}
       order by ${orderCol} ${dir === "asc" ? sql`asc` : sql`desc`} nulls last, number desc

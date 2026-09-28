@@ -14,6 +14,11 @@ type Profit = {
   quotedMarginPct: number | null;
   materialCents: number;
   outsideCents: number;
+  /** Breakdown of materialCents + outsideCents (src/lib/jobs/profit.ts). */
+  expenseMaterialCents: number;
+  expenseOutsideCents: number;
+  stockUsedCents: number;
+  purchaseOrderCents: number;
   otherCents: number;
   laborCents: number;
   laborHours: number;
@@ -90,10 +95,35 @@ export function MoneyPanel({
             </div>
             {profit.hasActuals && (
               <dl className="tabular mt-4 grid grid-cols-[1fr_auto] gap-y-1 border-t border-slate-100 pt-3 text-sm">
-                <dt className="text-slate-500">Materials</dt>
-                <dd>{money(profit.materialCents)}</dd>
-                <dt className="text-slate-500">Outside vendors / install</dt>
-                <dd>{money(profit.outsideCents)}</dd>
+                {profit.stockUsedCents > 0 && (
+                  <>
+                    <dt className="text-slate-500">
+                      Stock used <span className="text-slate-400">(at our cost)</span>
+                    </dt>
+                    <dd>{money(profit.stockUsedCents)}</dd>
+                  </>
+                )}
+                {profit.purchaseOrderCents > 0 && (
+                  <>
+                    <dt className="text-slate-500">
+                      Purchase orders{" "}
+                      <span className="text-slate-400">(bought for this job)</span>
+                    </dt>
+                    <dd>{money(profit.purchaseOrderCents)}</dd>
+                  </>
+                )}
+                {(profit.expenseMaterialCents > 0 || (profit.stockUsedCents === 0 && profit.purchaseOrderCents === 0)) && (
+                  <>
+                    <dt className="text-slate-500">Materials (expenses)</dt>
+                    <dd>{money(profit.expenseMaterialCents)}</dd>
+                  </>
+                )}
+                {(profit.expenseOutsideCents > 0 || (profit.stockUsedCents === 0 && profit.purchaseOrderCents === 0)) && (
+                  <>
+                    <dt className="text-slate-500">Outside vendors / install (expenses)</dt>
+                    <dd>{money(profit.expenseOutsideCents)}</dd>
+                  </>
+                )}
                 <dt className="text-slate-500">Labor ({profit.laborHours} hr)</dt>
                 <dd>{money(profit.laborCents)}</dd>
                 {profit.otherCents > 0 && (
@@ -124,7 +154,17 @@ export function MoneyPanel({
           />
           <CardBody>
             {expenses.length === 0 ? (
-              <p className="text-sm text-slate-500">No expenses attached. Add material and vendor costs to see the real profit.</p>
+              <p className="text-sm text-slate-500">
+                {profit && (profit.stockUsedCents > 0 || profit.purchaseOrderCents > 0)
+                  ? `No other expenses attached. ${
+                      profit.stockUsedCents > 0 && profit.purchaseOrderCents > 0
+                        ? "Stock used and purchase orders for this job are"
+                        : profit.stockUsedCents > 0
+                          ? "Stock used on this job is"
+                          : "Purchase orders for this job are"
+                    } already counted above.`
+                  : "No expenses attached. Add material and vendor costs to see the real profit."}
+              </p>
             ) : (
               <ul className="divide-y divide-slate-100">
                 {expenses.map((e) => (

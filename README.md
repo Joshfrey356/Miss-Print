@@ -70,6 +70,29 @@ One place to see and run the business: jobs, quotes, customers, production, proo
 - **QuickBooks Online.** Each shop connects its own QuickBooks company in Settings → Integrations. Customers, invoices (as `INV-7001`), payments and voids are sent automatically in the background. The card shows what's synced and what failed, with Retry, and a start date keeps invoices already entered by hand from being doubled. QuickBooks Desktop isn't supported.
 - **Server setup for these:** `APP_SECRET_KEY` (encrypts each shop's Stripe keys and QuickBooks tokens; must never change), `APP_URL` (public address for pay links, webhooks and the QuickBooks redirect), and for QuickBooks the platform's Intuit app keys `QUICKBOOKS_CLIENT_ID` / `QUICKBOOKS_CLIENT_SECRET` (redirect URI `<APP_URL>/api/quickbooks/callback`). See `.env.example`.
 
+## Inventory, scheduling & customer portal
+
+- **Inventory & purchasing** (`/inventory`):
+  - Track paper and materials: on hand, reserved for jobs, on order and available, with Low / Out / "Short for jobs" warnings.
+  - Jobs reserve the paper their estimate needs, and it's deducted when the job moves past production.
+  - Receive, use, adjust and count stock, with a full history.
+  - Purchase orders (PO-1001…): email or print to the vendor, receive in parts, and charge lines to a job.
+  - Suggested orders by vendor.
+  - QR shelf labels that open the item on a phone.
+  - Job profit everywhere counts purchase-order and stock costs.
+- **Equipment schedule** (`/schedule`):
+  - Day and week board per machine with drag & drop.
+  - A queue of work waiting to be scheduled, with run times taken from the estimate.
+  - One-click or automatic scheduling.
+  - Warnings for double-booking, going over capacity, outside hours or ending after the due date.
+  - Machine hours and work days are set in Settings → Presses & Equipment, and the machines' day shows at `/tv?view=machines`.
+- **Customer portal** (`/portal`, set up in Settings → Customer Portal):
+  - Customers sign in with an emailed link, no password, and everything is branded as the shop.
+  - They can see their orders and status, upload artwork, approve proofs, accept or decline quotes, pay invoices online, and request reorders, quotes or send a message.
+  - Staff handle requests in **Requests**, and invite customers from the customer page.
+- **Job number prefix** per shop (Settings → Company Profile), e.g. MP-10428 or LS-1002.
+- **Front counter extras:** starting cash in the end-of-day count, a checkout bar on phones, add a customer without leaving the page, and reprint the last receipt.
+
 ## Quick start (development)
 
 Requires Node 20.9+ and PostgreSQL 14+ (with the `pg_trgm` extension, which is standard on Supabase, Neon and RDS).

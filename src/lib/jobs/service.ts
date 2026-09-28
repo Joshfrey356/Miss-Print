@@ -22,6 +22,7 @@ import { taxFor } from "@/lib/pricing/engine";
 import { getJobPrefix, nextNumber } from "@/lib/tenant";
 import type { ItemPricingRequest } from "@/lib/pricing/server";
 import { priceLine, storedBreakdown } from "@/lib/quotes/pricing";
+import { syncJobReservations } from "@/lib/inventory/service";
 import type { StoredBreakdown } from "@/lib/quotes/print-options";
 
 /** Who is doing it. The shop comes with them: everything they touch belongs to it. */
@@ -66,6 +67,8 @@ export async function changeJobStatus(
 
   await tx.update(jobs).set(patch).where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, job.id)));
   await tx.insert(jobStatusHistory).values({ tenantId, jobId: job.id, fromStatus: job.status, toStatus: to, changedBy: actor?.id ?? null, note: opts.note ?? null });
+  // Stock: printed → reserved paper/materials come off the shelf; cancelled → given back.
+  await syncJobReservations(tx, tenantId, job.id, actor?.id ?? null);
   await logActivity(
     {
       tenantId,
@@ -199,6 +202,7 @@ export async function convertQuoteToJob(quoteId: number, actor: Actor): Promise<
     if (quoteFiles.length)
       await tx.update(files).set({ jobId: job!.id }).where(and(eq(files.tenantId, tenantId), inArray(files.id, quoteFiles.map((f) => f.id))));
     await tx.update(quotes).set({ status: "converted", respondedAt: q.respondedAt ?? new Date(), updatedAt: new Date() }).where(and(eq(quotes.tenantId, tenantId), eq(quotes.id, q.id)));
+    await syncJobReservations(tx, tenantId, job!.id, actor.id);
     await tx.insert(jobStatusHistory).values({ tenantId, jobId: job!.id, fromStatus: null, toStatus: start, changedBy: actor.id, note: "Created from quote" });
     await logActivity({ tenantId, action: "job.created", entityType: "job", entityId: job!.id, jobId: job!.id, customerId: q.customerId, quoteId: q.id, actorId: actor.id, summary: `Created from quote Q-${q.number}` }, tx);
     await logActivity({ tenantId, action: "quote.converted", entityType: "quote", entityId: q.id, quoteId: q.id, customerId: q.customerId, jobId: job!.id, actorId: actor.id, summary: `Converted to job ${jobNo(job!.number)}` }, tx);
@@ -331,6 +335,7 @@ export async function reorderJob(sourceJobId: number, opts: ReorderOptions, acto
         })),
       );
     await recalcJobTotals(tx, tenantId, job!.id);
+    await syncJobReservations(tx, tenantId, job!.id, actor.id);
     await tx.insert(jobStatusHistory).values({ tenantId, jobId: job!.id, fromStatus: null, toStatus: status, changedBy: actor.id, note: `Reorder of ${jobNo(src.number)}` });
     await logActivity({ tenantId, action: "job.created", entityType: "job", entityId: job!.id, jobId: job!.id, customerId: src.customerId, actorId: actor.id, summary: `Reordered from ${jobNo(src.number)}` }, tx);
     await logActivity({ tenantId, action: "job.reordered", entityType: "job", entityId: src.id, jobId: src.id, customerId: src.customerId, actorId: actor.id, summary: `Reordered as ${jobNo(job!.number)}` }, tx);

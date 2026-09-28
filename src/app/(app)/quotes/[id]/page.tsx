@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { AlertTriangle, Building2, CalendarClock, Clock, Printer } from "lucide-react";
+import { AlertTriangle, Building2, CalendarClock, Clock, Globe, Printer } from "lucide-react";
 import { requirePagePermission } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { getQuoteDetail, FOLLOWUP_DAYS } from "@/lib/quotes/queries";
@@ -8,7 +8,7 @@ import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { QuoteStatusBadge } from "@/components/status";
 import { QuoteActions } from "@/components/quotes/quote-actions";
 import { HistoryPanel } from "@/components/jobs/detail/history-panel";
-import { fmtDate, fmtSize, money, pct, quoteNo, timeAgo, today } from "@/lib/format";
+import { fmtDate, fmtDateTime, fmtSize, money, pct, quoteNo, timeAgo, today } from "@/lib/format";
 import { marginOf } from "@/lib/pricing/engine";
 import { breakdownForRole, productionSummary, quantityChoices } from "@/lib/quotes/print-options";
 
@@ -161,6 +161,20 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
               {q.lostReason && <p className="text-red-700">Lost: {q.lostReason}</p>}
             </CardBody>
           </Card>
+          {q.responseName && (q.status === "accepted" || q.status === "declined" || q.status === "converted") && (
+            <Card className={q.status === "declined" ? undefined : "border-emerald-200"}>
+              <CardHeader title={q.status === "declined" ? "Declined online" : "Accepted online"} description="In the customer portal" />
+              <CardBody className="space-y-1.5 text-sm text-slate-600">
+                <p className="flex items-center gap-2 text-[15px] font-medium text-slate-900">
+                  <Globe className="size-4 text-slate-400" /> {q.responseName}
+                </p>
+                {q.responseEmail && <p className="break-all">{q.responseEmail}</p>}
+                {q.respondedAt && <p>{fmtDateTime(q.respondedAt)}</p>}
+                {q.responseIp && <p>IP address {q.responseIp}</p>}
+                {q.responseNote && <p className="whitespace-pre-line rounded-lg bg-slate-50 px-3 py-2 text-[15px] text-slate-800">{q.responseNote}</p>}
+              </CardBody>
+            </Card>
+          )}
           <Card>
             <CardHeader title="History" />
             <CardBody>

@@ -396,3 +396,65 @@ export async function logCommunication(customerId: number, fd: FormData): Promis
     revalidatePath(`/customers/${customerId}`);
   }, "Saved to the log");
 }
+
+// ---------------------------------------------------------------------------
+// Quick add (from the customer picker: counter, quote builder, new job)
+// ---------------------------------------------------------------------------
+const quickCustomerSchema = z.object({
+  isCompany: z.boolean(),
+  name: z.string().trim().min(1, "Please enter a name.").max(200, "That name is too long."),
+  phone: optPhone("Phone"),
+  email: optEmail("Email"),
+  taxExempt: z.boolean(),
+  contactName: optText(200, "Contact name"),
+  confirmDuplicate: z.boolean().optional(),
+});
+
+/** What the picker needs to select the new customer (same shape as /api/customers/search). */
+export type QuickCustomer = {
+  id: number;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  city: string | null;
+  taxExempt: boolean;
+  discountPct: number;
+  poRequired: boolean;
+  salespersonId: number | null;
+  contacts: { id: number; name: string; email: string | null; isPrimary: boolean }[];
+};
+
+/**
+ * Create a customer with just the basics without leaving the page. Like saveCustomer, possible
+ * duplicates are returned first (unless confirmed) so the person can pick the existing one.
+ */
+export async function quickCreateCustomer(input: z.input<typeof quickCustomerSchema>): Promise<ActionResult<{ duplicates?: DuplicateMatch[]; customer?: QuickCustomer }>> {
+  return runAction(async () => {
+    const user = await requirePermission("customers.edit");
+    const blank = (s: string | null | undefined) => (s?.trim() ? s.trim() : null);
+    const v = quickCustomerSchema.parse({ ...input, phone: blank(input.phone), email: blank(input.email)?.toLowerCase() ?? null, contactName: blank(input.contactName) });
+    if (!v.confirmDuplicate) {
+      const duplicates = await findDuplicateCustomers(user.tenantId, { name: v.name, phone: v.phone, email: v.email });
+      if (duplicates.length) return { duplicates };
+    }
+    const customer = await db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(customers)
+        .values({ tenantId: user.tenantId, name: v.name, isCompany: v.isCompany, phone: v.phone, email: v.email, taxExempt: v.taxExempt, paymentTerms: "due_on_receipt", customerSince: today() })
+        .returning();
+      const contacts = v.contactName
+        ? await tx
+            .insert(customerContacts)
+            .values({ tenantId: user.tenantId, customerId: row!.id, name: v.contactName, isPrimary: true })
+            .returning({ id: customerContacts.id, name: customerContacts.name, email: customerContacts.email, isPrimary: customerContacts.isPrimary })
+        : [];
+      await logActivity(
+        { tenantId: user.tenantId, action: "customer.created", entityType: "customer", entityId: row!.id, customerId: row!.id, actorId: user.id, summary: `${user.name} added customer ${v.name} (quick add)` },
+        tx,
+      );
+      return { id: row!.id, name: row!.name, phone: row!.phone, email: row!.email, city: row!.city, taxExempt: row!.taxExempt, discountPct: row!.discountPct, poRequired: row!.poRequired, salespersonId: row!.salespersonId, contacts };
+    });
+    revalidatePath("/customers");
+    return { customer };
+  }, "Customer added");
+}

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Building2, ChevronRight, FileUp, Layers, Mail, MapPin, Plug, Printer, Scale, Scissors, SlidersHorizontal, Tags, UserCog } from "lucide-react";
+import { Building2, ChevronRight, FileUp, Globe, Layers, Mail, MapPin, Plug, Printer, Scale, Scissors, SlidersHorizontal, Tags, UserCog } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { requirePagePermission } from "@/lib/auth";
 import { getSettings } from "@/lib/settings";
@@ -62,6 +62,12 @@ const CARDS: { href: string; title: string; text: string; icon: LucideIcon }[] =
     title: "Customer Messages & Automations",
     text: "Reminders and follow-ups for quotes, proofs and invoices. Coming in Phase 2 — nothing is sent automatically yet.",
     icon: Mail,
+  },
+  {
+    href: "/settings/portal",
+    title: "Customer Portal",
+    text: "Your customers' own website: orders, proofs, quotes, invoices and reorders. Turn it on or off and choose what they can do.",
+    icon: Globe,
   },
   { href: "/settings/integrations", title: "Integrations", text: "QuickBooks, card payments (Stripe), email, file storage and more.", icon: Plug },
 ];

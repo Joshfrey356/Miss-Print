@@ -6,7 +6,7 @@ export type ActivityInput = {
   /** The shop this happened in. */
   tenantId: number;
   action: string; // "job.status_changed"
-  entityType: "job" | "quote" | "customer" | "invoice" | "payment" | "expense" | "user" | "setting" | "file" | "proof" | "task" | "message" | "event" | "knowledge";
+  entityType: "job" | "quote" | "customer" | "invoice" | "payment" | "expense" | "user" | "setting" | "file" | "proof" | "task" | "message" | "event" | "knowledge" | "material" | "purchase_order";
   entityId?: number | null;
   jobId?: number | null;
   customerId?: number | null;

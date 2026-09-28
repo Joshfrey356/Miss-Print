@@ -14,7 +14,8 @@ import bcrypt from "bcryptjs";
 import { eq, sql, type SQLWrapper } from "drizzle-orm";
 import * as s from "../src/lib/db/schema";
 import type { PricingConfig } from "../src/lib/pricing/engine";
-import { insertStarterPrintCatalog, starterPrintCategories } from "../src/lib/estimating/starter-catalog";
+import { insertStarterPrintCatalog, starterPrintCategories, type StarterCatalog } from "../src/lib/estimating/starter-catalog";
+import { reservationNeeds } from "../src/lib/inventory/math";
 
 const client = postgres(process.env.DATABASE_URL!, { max: 1, prepare: false, onnotice: () => {} });
 const db = drizzle(client, { schema: s });
@@ -809,8 +810,12 @@ async function main() {
     { tenantId: T, title: "Munster vs Hammond — what goes where", category: "Operations", body: "**Munster** (front counter): customer intake, quotes, business cards, brochures, flyers, envelopes, forms, letterhead, digital & offset printing.\n\n**Hammond** (production): banners, signs, large format, wall graphics, decals, vehicle graphics & wraps, installations.\n\nWhen a Munster job needs Hammond production, set the job's location to Hammond when it's Approved for Production. The job page shows which location owns the next step.", updatedBy: U.rick!.id },
   ]);
 
+  // ---------- inventory & purchasing (tracked paper, reservations, purchase orders) ----------
+  const inv = await seedInventory(T, { paper: printCatalog.paper, pressId: printCatalog.digitalPressId, M, V, J, U, locationId: munster!.id });
+
   await syncCounters(T);
   console.log(`✓ Seeded ${us.length} users, ${custRows.length} customers, ${histCount + cur.length + 4} jobs.`);
+  console.log(`✓ Inventory: ${inv.tracked} items tracked, ${inv.movements} stock movements, ${inv.reservations} job reservations, ${inv.pos} purchase orders.`);
 
   // ---------- second demo shop ----------
   console.log("Seeding Lakeshore Signs (second demo shop)…");
@@ -823,6 +828,151 @@ async function main() {
   void abcWrapOld;
   void dentalCards;
   await client.end();
+}
+
+/**
+ * Miss Print's stock room: the starter papers (and two sign materials) tracked with a month of history,
+ * the paper that open print jobs need reserved, one purchase order partly received and one draft.
+ * Deterministic (no rand()), so the rest of the demo data is unchanged. A few items are left low or
+ * short on purpose so Suggested orders and the dashboard have something to show.
+ */
+async function seedInventory(
+  T: number,
+  ctx: {
+    paper: StarterCatalog["paper"];
+    M: Record<string, s.Material>;
+    V: Record<string, typeof s.vendors.$inferSelect>;
+    pressId: number;
+    J: (title: string) => { id: number; number: number };
+    U: Record<string, s.User>;
+    locationId: number;
+  },
+) {
+  const { paper, M, V, J, U } = ctx;
+  let movements = 0;
+
+  // Veritiv is where paper purchase orders go.
+  await db.update(s.vendors).set({ contactName: "Sam Ortiz", email: "orders@veritiv.example", accountNumber: "MP-4471", phone: "800-555-0142" }).where(eq(s.vendors.id, V["Veritiv"]!.id));
+  await db.update(s.vendors).set({ email: "hammond@grimco.example", accountNumber: "44-18820" }).where(eq(s.vendors.id, V["Grimco"]!.id));
+
+  // What to track: [material id, reorder level, usual order, bin]. Opening counts are 30 days ago.
+  type Track = { id: number; level: number; qty: number; bin: string; opening: number; events: { day: number; kind: "receive" | "use" | "adjust" | "count"; qty: number; note: string; job?: string; po?: boolean }[] };
+  const tracks: Track[] = [
+    { id: paper.bond20_letter, level: 5000, qty: 10000, bin: "Munster · copy room shelf 1", opening: 7500, events: [{ day: -18, kind: "receive", qty: 10000, note: "4 cartons from Veritiv" }, { day: -9, kind: "use", qty: 3000, note: "Copies & forms (week)" }, { day: -2, kind: "use", qty: 2000, note: "Copies & forms (week)" }] },
+    { id: paper.bond20_tabloid, level: 1000, qty: 2500, bin: "Munster · copy room shelf 2", opening: 1500, events: [{ day: -6, kind: "use", qty: 700, note: "Menus & posters" }] },
+    { id: paper.text60, level: 1000, qty: 2500, bin: "Munster · paper rack A1", opening: 3000, events: [] },
+    { id: paper.text70, level: 1000, qty: 2500, bin: "Munster · paper rack A2", opening: 2500, events: [{ day: -12, kind: "use", qty: 700, note: "Letterhead runs" }] },
+    { id: paper.gloss80text, level: 1000, qty: 2500, bin: "Munster · paper rack B1", opening: 2000, events: [{ day: -15, kind: "use", qty: 600, note: "Flyers" }, { day: -7, kind: "use", qty: 500, note: "Flyers" }] },
+    { id: paper.gloss100text, level: 1000, qty: 5000, bin: "Munster · paper rack B2", opening: 1250, events: [{ day: -10, kind: "use", qty: 1000, note: "Brochure runs" }, { day: -2, kind: "receive", qty: 2500, note: "Half the order — the rest is backordered", po: true }] },
+    { id: paper.gloss80cover, level: 500, qty: 1000, bin: "Munster · paper rack C1", opening: 700, events: [{ day: -5, kind: "adjust", qty: -100, note: "Damaged — water on bottom ream" }] },
+    { id: paper.gloss100cover, level: 500, qty: 1000, bin: "Munster · paper rack C2", opening: 600, events: [{ day: -11, kind: "use", qty: 350, note: "Postcards" }] },
+    { id: paper.c2s14pt, level: 250, qty: 1000, bin: "Munster · card stock shelf", opening: 400, events: [{ day: -20, kind: "use", qty: 300, note: "Business cards (week)" }, { day: -2, kind: "use", qty: 45, note: "", job: "1,000 Business Cards — Dr. Shah" }, { day: -1, kind: "count", qty: 20, note: "Monthly count" }] },
+    { id: M["13oz Scrim Vinyl Banner"]!.id, level: 400, qty: 1350, bin: "Hammond · roll rack 1", opening: 1350, events: [{ day: -14, kind: "use", qty: 96, note: "Banners (week)" }, { day: -4, kind: "use", qty: 128, note: "Banners (week)" }] },
+    { id: M["4mm Coroplast"]!.id, level: 320, qty: 640, bin: "Hammond · sheet cart", opening: 640, events: [{ day: -8, kind: "use", qty: 240, note: "Yard signs" }] },
+  ];
+
+  // ---------- purchase orders ----------
+  const veritiv = V["Veritiv"]!.id;
+  const [po1] = await db
+    .insert(s.purchaseOrders)
+    .values({ tenantId: T, number: 1001, vendorId: veritiv, status: "partial", orderedOn: dayOffset(-5), expectedOn: dayOffset(2), locationId: ctx.locationId, notes: "Deliver to the Munster back door.", subtotalCents: 55500, shippingCents: 0, taxCents: 0, totalCents: 55500, sentAt: at(-5, 10), createdBy: U.jen!.id, createdAt: at(-5, 9, 40), updatedAt: at(-2, 11) })
+    .returning();
+  const [po1a] = await db
+    .insert(s.purchaseOrderItems)
+    .values([
+      { tenantId: T, purchaseOrderId: po1!.id, materialId: paper.gloss100text, description: "100# Gloss Text White 12×18", quantity: 5000, receivedQuantity: 2500, unit: "sheet", unitCostCents: 8, amountCents: 40000, sortOrder: 0 },
+      { tenantId: T, purchaseOrderId: po1!.id, materialId: paper.gloss80text, description: "80# Gloss Text White 12×18", quantity: 2500, receivedQuantity: 0, unit: "sheet", unitCostCents: 6.2, amountCents: 15500, sortOrder: 1 },
+    ])
+    .returning();
+  const [po2] = await db
+    .insert(s.purchaseOrders)
+    .values({ tenantId: T, number: 1002, vendorId: veritiv, status: "draft", locationId: ctx.locationId, subtotalCents: 35000, shippingCents: 0, taxCents: 0, totalCents: 35000, createdBy: U.jen!.id, createdAt: at(0, 8, 15), updatedAt: at(0, 8, 15) })
+    .returning();
+  await db.insert(s.purchaseOrderItems).values([
+    { tenantId: T, purchaseOrderId: po2!.id, materialId: paper.c2s14pt, description: "14pt C2S Cover 12×18", quantity: 1000, unit: "sheet", unitCostCents: 20, amountCents: 20000, sortOrder: 0 },
+    { tenantId: T, purchaseOrderId: po2!.id, materialId: paper.gloss100cover, description: "100# Gloss Cover 12×18", quantity: 1000, unit: "sheet", unitCostCents: 15, amountCents: 15000, sortOrder: 1 },
+  ]);
+  await db.update(s.tenants).set({ nextPoNumber: 1003 }).where(eq(s.tenants.id, T));
+  await db.insert(s.activityLogs).values([
+    { tenantId: T, action: "po.created", entityType: "purchase_order", entityId: po1!.id, actorId: U.jen!.id, summary: "Created PO-1001 ($555.00)", createdAt: at(-5, 9, 40) },
+    { tenantId: T, action: "po.ordered", entityType: "purchase_order", entityId: po1!.id, actorId: U.jen!.id, summary: "Ordered PO-1001 — emailed to orders@veritiv.example", createdAt: at(-5, 10) },
+    { tenantId: T, action: "po.received", entityType: "purchase_order", entityId: po1!.id, actorId: U.luis!.id, summary: "Received on PO-1001: 2,500 sheets 100# Gloss Text 12×18 — 2 lines still to come", createdAt: at(-2, 11) },
+    { tenantId: T, action: "po.created", entityType: "purchase_order", entityId: po2!.id, actorId: U.jen!.id, summary: "Created PO-1002 ($350.00)", createdAt: at(0, 8, 15) },
+  ]);
+
+  // ---------- the ledger ----------
+  for (const t of tracks) {
+    let bal = 0;
+    const rows: (typeof s.inventoryMovements.$inferInsert)[] = [];
+    const add = (day: number, kind: Track["events"][number]["kind"], qty: number, note: string | null, extra: { jobId?: number; purchaseOrderId?: number; by?: number } = {}) => {
+      bal += qty;
+      rows.push({ tenantId: T, materialId: t.id, kind, quantity: qty, balanceAfter: bal, note, jobId: extra.jobId ?? null, purchaseOrderId: extra.purchaseOrderId ?? null, createdBy: extra.by ?? U.luis!.id, createdAt: at(day, 8 + (rows.length % 8), 5 * rows.length) });
+    };
+    add(-30, "count", t.opening, "Started tracking — opening count", { by: U.jen!.id });
+    for (const e of t.events) {
+      if (e.kind === "count") add(e.day, "count", e.qty - bal, `Counted ${e.qty}`);
+      else if (e.kind === "receive") add(e.day, "receive", e.qty, e.note, e.po ? { purchaseOrderId: po1!.id } : {});
+      else if (e.kind === "use" && e.job) add(e.day, "use", -e.qty, `Used on MP-${J(e.job).number} (printed)`, { jobId: J(e.job).id });
+      else add(e.day, e.kind, e.kind === "use" ? -e.qty : e.qty, e.note);
+    }
+    await db.insert(s.inventoryMovements).values(rows);
+    movements += rows.length;
+    await db.update(s.materials).set({ trackInventory: true, quantityOnHand: bal, reorderLevel: t.level, reorderQuantity: t.qty, binLocation: t.bin }).where(eq(s.materials.id, t.id));
+  }
+  void po1a;
+
+  // ---------- open jobs reserve what they need ----------
+  // Print jobs keep how they run (press, paper, sheets) like a quote's print estimate would.
+  const run = (paperId: number, paperName: string, o: { ups: number; layout: string; net: number; spoil: number; sides: 1 | 2; hours: number; pages: number; back: number; services: string[] }) => ({
+    production: {
+      pressId: ctx.pressId,
+      pressName: "Digital color press",
+      paperId,
+      paperName,
+      parentSheet: "12 × 18",
+      pressSheet: "12 × 18",
+      outs: 1,
+      ups: o.ups,
+      layout: o.layout,
+      netSheets: o.net,
+      spoilageSheets: o.spoil,
+      pressSheets: o.net + o.spoil,
+      parentSheets: o.net + o.spoil,
+      sidesPrinted: o.sides,
+      passes: o.sides,
+      plates: 0,
+      impressions: (o.net + o.spoil) * o.sides,
+      runHours: o.hours,
+      pages: o.pages,
+      colorsFront: 4,
+      colorsBack: o.back,
+      bleed: true,
+      services: o.services,
+    },
+  });
+  const printRuns: [string, ReturnType<typeof run>][] = [
+    ["500 Tri-Fold Brochures", run(paper.gloss100text, "100# Gloss Text 12×18", { ups: 2, layout: "2 × 1", net: 250, spoil: 15, sides: 2, hours: 0.6, pages: 2, back: 4, services: ["Cutting", "Folding"] })],
+    ["Repeat: 500 Business Cards — Karen Lutz", run(paper.c2s14pt, "14pt C2S Cover 12×18", { ups: 24, layout: "4 × 6", net: 21, spoil: 10, sides: 2, hours: 0.3, pages: 2, back: 4, services: ["Cutting"] })],
+    ["1,000 Business Cards — Dr. Shah", run(paper.c2s14pt, "14pt C2S Cover 12×18", { ups: 24, layout: "4 × 6", net: 42, spoil: 3, sides: 2, hours: 0.4, pages: 2, back: 4, services: ["Cutting", "Soft-touch coating"] })],
+  ];
+  for (const [title, pb] of printRuns) await db.update(s.jobItems).set({ materialId: pb.production.paperId, pricingBreakdown: pb }).where(eq(s.jobItems.jobId, J(title).id));
+  // Sign jobs on tracked materials.
+  await db.update(s.jobItems).set({ materialId: M["13oz Scrim Vinyl Banner"]!.id }).where(eq(s.jobItems.jobId, J("4x8 Outdoor Banner — Munster Library Project").id));
+  await db.update(s.jobItems).set({ materialId: M["4mm Coroplast"]!.id }).where(eq(s.jobItems.jobId, J("50 Yard Signs — Fall Open House").id));
+
+  const tracked = new Map(tracks.map((t) => [t.id, { id: t.id, unit: t.id === M["13oz Scrim Vinyl Banner"]!.id || t.id === M["4mm Coroplast"]!.id ? "sqft" : "sheet" }]));
+  let reservations = 0;
+  const reserve = async (title: string, status: "reserved" | "used") => {
+    const job = J(title);
+    const items = await db.select().from(s.jobItems).where(eq(s.jobItems.jobId, job.id));
+    const needs = reservationNeeds(items, tracked);
+    if (needs.length) await db.insert(s.inventoryReservations).values(needs.map((n) => ({ tenantId: T, jobId: job.id, jobItemId: n.jobItemId, materialId: n.materialId, quantity: n.quantity, status })));
+    reservations += needs.length;
+  };
+  for (const title of ["500 Tri-Fold Brochures", "Repeat: 500 Business Cards — Karen Lutz", "4x8 Outdoor Banner — Munster Library Project", "50 Yard Signs — Fall Open House"]) await reserve(title, "reserved");
+  await reserve("1,000 Business Cards — Dr. Shah", "used");
+
+  return { tracked: tracks.length, movements, reservations, pos: 2 };
 }
 
 /**

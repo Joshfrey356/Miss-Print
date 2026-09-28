@@ -16,6 +16,8 @@ import { requireUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { attentionJobs, importantMessages, jobsCompletedByMonth, moneyCards, myQueue, quoteWinRate, revenueByMonth, salesByCategory, todayCounts } from "@/lib/dashboard";
 import { getMyTasks } from "@/lib/tasks/queries";
+import { getInventoryAlerts } from "@/lib/inventory/queries";
+import { inventoryAttention } from "@/lib/inventory/math";
 import { getActiveUsers } from "@/lib/lookups";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Avatar } from "@/components/ui/avatar";
@@ -26,6 +28,7 @@ import { BarList, ColumnChart } from "@/components/charts";
 import { fmtTime, jobNo as fmtJobNo, money, moneyShort, pct, plural, timeAgo, today } from "@/lib/format";
 import { getJobPrefix } from "@/lib/tenant";
 import { cn } from "@/lib/utils";
+import { ScheduleTodayCard } from "@/components/schedule/schedule-today-card";
 
 export const metadata = { title: "Dashboard" };
 
@@ -71,6 +74,7 @@ export default async function DashboardPage() {
     attention.push({ n: counts.quotesAccepted, text: `${plural(counts.quotesAccepted, "accepted quote is", "accepted quotes are")} waiting to become a job`, href: "/quotes?view=accepted", tone: "amber" });
   }
   if (can(r, "money.view")) attention.push({ n: counts.overdueInvoices, text: `${plural(counts.overdueInvoices, "invoice is", "invoices are")} overdue`, href: "/money?tab=receivables", tone: "red" });
+  if (can(r, "inventory.view")) attention.push(...inventoryAttention(await getInventoryAlerts(user.tenantId)));
   const needs = attention.filter((a) => a.n > 0);
 
   // ---------------- TODAY tiles ----------------
@@ -172,6 +176,8 @@ export default async function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {(company || can(r, "schedule.edit")) && <ScheduleTodayCard tenantId={user.tenantId} />}
 
       {/* ---------------- Money ---------------- */}
       {cards && (

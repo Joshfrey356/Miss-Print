@@ -123,3 +123,12 @@ test("print items at the counter: category defaults with the counter's sides and
   assert.equal(printDescription("Business Cards", 3.5, 2, 2, "14pt C2S"), "Business Cards — 3.5 × 2, two-sided, 14pt C2S");
   assert.equal(shortProduction({ ups: 21, pressSheets: 59, pressName: "Konica C4080" }), "21 up · 59 sheets · Konica C4080");
 });
+
+import { expectedDrawer } from "../src/lib/counter/math";
+
+test("end of day with a starting float: expected = float + cash taken", () => {
+  assert.equal(expectedDrawer(10000, 4454), 14454);
+  assert.equal(expectedDrawer(0, 4454), 4454);
+  assert.equal(expectedDrawer(-50, 100), 100); // a negative float is treated as none
+  assert.equal(overShort(14400, expectedDrawer(10000, 4454)), -54);
+});

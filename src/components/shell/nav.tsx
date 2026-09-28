@@ -14,6 +14,7 @@ import {
   Store,
   CalendarClock,
   Package,
+  Inbox,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -22,6 +23,7 @@ export const NAV = [
   { key: "jobs", label: "Jobs", href: "/jobs", icon: Briefcase },
   { key: "quotes", label: "Quotes", href: "/quotes", icon: FileText },
   { key: "customers", label: "Customers", href: "/customers", icon: Users },
+  { key: "requests", label: "Requests", href: "/requests", icon: Inbox },
   { key: "calendar", label: "Calendar", href: "/calendar", icon: CalendarDays },
   { key: "schedule", label: "Schedule", href: "/schedule", icon: CalendarClock },
   { key: "messages", label: "Messages", href: "/messages", icon: MessageSquare },

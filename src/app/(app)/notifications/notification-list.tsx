@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { AtSign, Bell, CheckCheck, FileCheck, FileText, ListTodo, Receipt, Upload, Clock } from "lucide-react";
+import { AtSign, Bell, CheckCheck, FileCheck, FileText, ListTodo, Receipt, Upload, Clock, Inbox } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { fmtDateTime, timeAgo } from "@/lib/format";
@@ -28,6 +28,7 @@ const ICONS: Record<string, typeof Bell> = {
   artwork: Upload,
   due_soon: Clock,
   invoice: Receipt,
+  request: Inbox,
 };
 
 export function MarkAllReadButton() {

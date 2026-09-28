@@ -15,7 +15,7 @@ export default async function EquipmentPage({ searchParams }: { searchParams: Pr
     <SettingsPage
       wide
       title="Presses & Equipment"
-      subtitle="Your presses and machines. Estimates use the digital and offset presses to price printing — click charges, plates, make-ready and press time."
+      subtitle="Your presses and machines. Estimates use the digital and offset presses to price printing — click charges, plates, make-ready and press time. The schedule uses the hours and days each machine runs."
       actions={<AddEquipmentButton locations={locations} />}
     >
       <EquipmentList

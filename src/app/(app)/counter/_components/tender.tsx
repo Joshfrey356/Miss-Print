@@ -133,7 +133,18 @@ export function Tender({
         )}
       </Card>
 
-      <Card className="p-4">
+      <Card
+        className="p-4"
+        onKeyDown={(e) => {
+          // Enter in a field records the payment (keyboard / number pad at the counter).
+          if (e.key === "Enter" && e.target instanceof HTMLInputElement && !pending) {
+            e.preventDefault();
+            if (method === "stripe") {
+              if (!link) startStripe();
+            } else record();
+          }
+        }}
+      >
         <Field label="Amount to pay now" htmlFor="pay-amount" hint={overBalance ? <span className="text-red-700">That&apos;s more than the {money(balanceCents)} balance.</span> : amount < balanceCents ? `Leaves ${money(balanceCents - amount)} to pay another way (or later).` : "The whole balance."}>
           <div className="flex flex-wrap items-center gap-2">
             <div className="w-48">

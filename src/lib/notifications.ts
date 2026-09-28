@@ -12,6 +12,7 @@ export const NOTIFICATION_KINDS = {
   artwork: "Artwork is uploaded to my job",
   due_soon: "My jobs are due tomorrow",
   invoice: "An invoice becomes overdue",
+  request: "A customer sends a request from the customer portal",
 } as const;
 export type NotificationKind = keyof typeof NOTIFICATION_KINDS;
 

@@ -227,7 +227,7 @@ export async function closeRegisterAction(_prev: unknown, fd: FormData): Promise
     if (locationId && !(await getLocations(user.tenantId)).some((l) => l.id === locationId)) throw new UserError("Location not found.");
     const row = await closeRegister(
       user.tenantId,
-      { businessDate, locationId, countedCashCents: cents("counted cash").parse(counted), notes: str(fd, "notes") },
+      { businessDate, locationId, openingFloatCents: cents("starting cash").parse(parseMoney(str(fd, "float")) ?? 0), countedCashCents: cents("counted cash").parse(counted), notes: str(fd, "notes") },
       actor(user),
     );
     revalidatePath("/counter", "layout");

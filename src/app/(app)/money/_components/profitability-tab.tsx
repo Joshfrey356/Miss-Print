@@ -162,7 +162,7 @@ export async function ProfitabilityTab({ tenantId, params }: { tenantId: number;
                           </Td>
                           <Td className="text-right">
                             {r.actualCost > 0 ? (
-                              <Num title={`Expenses ${money(r.expenseCost)} + labor ${money(r.laborCost)}`}>{money(r.actualCost)}</Num>
+                              <Num title={`Expenses ${money(r.expenseCost)} + purchases & stock ${money(r.purchaseCost)} + labor ${money(r.laborCost)}`}>{money(r.actualCost)}</Num>
                             ) : (
                               <span className="text-sm text-slate-400">No costs logged</span>
                             )}

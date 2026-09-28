@@ -3,6 +3,7 @@ import { sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { WORK_STATUSES } from "@/lib/jobs/workflow";
 import { SHOP_TZ, today } from "@/lib/format";
+import { jobPurchaseCostsSql } from "@/lib/inventory/cost-sql";
 import type { JobStatus } from "@/lib/db/schema";
 
 /**
@@ -96,6 +97,8 @@ export type JobProfit = {
   category: string;
   revenueCents: number;
   expenseCents: number;
+  /** Purchase orders charged to the job + stock used on it (src/lib/inventory/cost-sql.ts). */
+  purchaseCents: number;
   laborCents: number;
   costCents: number;
 };
@@ -110,18 +113,24 @@ export function jobProfits(tenantId: number, r: Range, laborRateCents: number) {
       select e.job_id, sum(e.amount_cents)::int as cents
       from expenses e where e.tenant_id = ${tenantId} and e.archived_at is null and e.job_id in (select job_id from rev)
       group by e.job_id
+    ), po as (
+      ${jobPurchaseCostsSql(tenantId, (col) => sql`${col} in (select job_id from rev)`)}
+    ), pcost as (
+      select job_id, (stock_cents + purchased_material_cents + po_outside_cents)::int as cents from po
     )
     select j.id, j.number, j.title, c.id as "customerId", c.name as customer,
       coalesce(pc.name, 'No product category') as category,
       rev.revenue as "revenueCents",
       coalesce(ex.cents, 0)::int as "expenseCents",
+      coalesce(pcost.cents, 0)::int as "purchaseCents",
       round(j.labor_hours * ${laborRateCents})::int as "laborCents",
-      (coalesce(ex.cents, 0) + round(j.labor_hours * ${laborRateCents}))::int as "costCents"
+      (coalesce(ex.cents, 0) + coalesce(pcost.cents, 0) + round(j.labor_hours * ${laborRateCents}))::int as "costCents"
     from rev
     join jobs j on j.id = rev.job_id
     join customers c on c.id = j.customer_id
     left join product_categories pc on pc.id = j.category_id
-    left join ex on ex.job_id = j.id`);
+    left join ex on ex.job_id = j.id
+    left join pcost on pcost.job_id = j.id`);
 }
 
 /** Revenue on invoices that aren't linked to a job (no cost is known for these). */

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { eq } from "drizzle-orm";
-import { Calculator, ChevronRight, FileText, Hammer, ReceiptText, Search, Settings2 } from "lucide-react";
+import { Calculator, Printer, ChevronRight, FileText, Hammer, ReceiptText, Search, Settings2 } from "lucide-react";
 import { requirePagePermission } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { db } from "@/lib/db";
@@ -16,7 +16,7 @@ import type { PricingConfig } from "@/lib/pricing/engine";
 import { dayTotals } from "@/lib/counter/math";
 import { counterPrintOptions, PRINT_QUANTITIES } from "@/lib/counter/print";
 import { loadPrintCatalog } from "@/lib/pricing/server";
-import { daySales, dayPayments, searchPayables } from "@/lib/counter/queries";
+import { daySales, dayPayments, lastReceipt, searchPayables } from "@/lib/counter/queries";
 import { stripeConnected } from "@/lib/payments/connection";
 import { Badge } from "@/components/ui/badge";
 import { LinkButton } from "@/components/ui/button";
@@ -37,7 +37,7 @@ export default async function CounterPage({ searchParams }: Props) {
   const sp = await searchParams;
   const tab = sp.tab === "pay" || sp.tab === "today" ? sp.tab : "sale";
   const now = today();
-  const [todayPays, connected] = await Promise.all([dayPayments(user.tenantId, now), stripeConnected(user.tenantId)]);
+  const [todayPays, connected, last] = await Promise.all([dayPayments(user.tenantId, now), stripeConnected(user.tenantId), lastReceipt(user.tenantId, user.id)]);
 
   return (
     <div>
@@ -54,10 +54,20 @@ export default async function CounterPage({ searchParams }: Props) {
           </span>
         }
         actions={
-          <LinkButton href="/counter/close" size="lg">
-            <Calculator className="size-5" />
-            End of day
-          </LinkButton>
+          <>
+            {last && (
+              <LinkButton href={`/counter/receipt/${last.invoiceId}?print=1`} size="lg" title={`Your last receipt: ${invoiceNo(last.number)}`}>
+                <Printer className="size-5" />
+                <span>
+                  Reprint last receipt <span className="font-normal text-slate-500">· {invoiceNo(last.number)}</span>
+                </span>
+              </LinkButton>
+            )}
+            <LinkButton href="/counter/close" size="lg">
+              <Calculator className="size-5" />
+              End of day
+            </LinkButton>
+          </>
         }
       />
       <LinkTabs

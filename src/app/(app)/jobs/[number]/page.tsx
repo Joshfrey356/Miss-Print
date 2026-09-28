@@ -15,6 +15,7 @@ import { FULFILLMENT_LABELS, WORK_STATUSES } from "@/lib/jobs/workflow";
 import { dueLabel, fmtDate, fmtDateTime, jobNo, parseJobNumber, quoteNo, today } from "@/lib/format";
 import { getJobPrefix } from "@/lib/tenant";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { JobMaterialsCard } from "@/components/inventory/job-materials-card";
 import { LinkTabs } from "@/components/ui/tabs";
 import { JobStatusBadge, PriorityBadge } from "@/components/status";
 import { LocationTag } from "@/components/jobs/job-meta";
@@ -29,6 +30,7 @@ import { MoneyPanel } from "@/components/jobs/detail/money-panel";
 import { JobChat } from "@/components/chat/job-chat";
 import { TaskList } from "@/components/tasks/task-list";
 import { cn } from "@/lib/utils";
+import { JobScheduleCard } from "@/components/schedule/job-schedule-card";
 
 export async function generateMetadata({ params }: { params: Promise<{ number: string }> }) {
   const [{ number }, user] = await Promise.all([params, getCurrentUser()]);
@@ -167,6 +169,7 @@ export default async function JobPage({ params, searchParams }: { params: Promis
                   />
                 </CardBody>
               </Card>
+              {can(r, "inventory.view") && <JobMaterialsCard tenantId={user.tenantId} jobId={job.id} canEdit={can(r, "inventory.edit")} />}
               {(job.internalNotes || job.customerNotes) && (
                 <Card>
                   <CardHeader title="Notes" />
@@ -258,6 +261,7 @@ export default async function JobPage({ params, searchParams }: { params: Promis
 
         {/* ---------- Right column: who / where / chat ---------- */}
         <div className="space-y-6">
+          <JobScheduleCard tenantId={user.tenantId} jobId={job.id} canEdit={can(r, "schedule.edit")} canView={can(r, "schedule.edit") || can(r, "dashboard.company")} />
           <Card>
             <CardHeader title="People" />
             <CardBody>

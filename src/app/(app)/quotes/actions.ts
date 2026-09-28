@@ -19,6 +19,9 @@ import { getSettings } from "@/lib/settings";
 import { addDays, fmtSize, money, quoteNo, today } from "@/lib/format";
 import { taxFor, type PricingResult } from "@/lib/pricing/engine";
 import { emailProvider } from "@/lib/email";
+import { contactForEmail, createPortalLink, portalAccessBlocked, portalLinkUrl } from "@/lib/portal/links";
+import { QUOTE_LINK_DAYS } from "@/lib/portal/tokens";
+import { getPortalSettings } from "@/lib/portal/settings";
 
 // ---------------------------------------------------------------------------
 // Live pricing & history (called while typing in the quote builder)
@@ -329,6 +332,23 @@ export async function saveQuote(payload: QuotePayload) {
 // ---------------------------------------------------------------------------
 // Status changes
 // ---------------------------------------------------------------------------
+/**
+ * Customer portal link for a quote email: signs the recipient in (as a person at this customer) and opens
+ * the quote, where they can accept or decline it. Null when staff turned portal access off for that email.
+ */
+async function quotePortalLink(tenantId: number, q: { id: number; customerId: number }, email: string, contact: { id: number; email: string | null } | null, userId: number): Promise<{ url: string; canAccept: boolean } | null> {
+  try {
+    const portal = await getPortalSettings(tenantId);
+    if (!portal.enabled || (await portalAccessBlocked(tenantId, q.customerId, email))) return null;
+    const contactId = contact && contact.email?.trim().toLowerCase() === email.toLowerCase() ? contact.id : ((await contactForEmail(tenantId, q.customerId, email))?.id ?? null);
+    const token = await createPortalLink(db, tenantId, { customerId: q.customerId, contactId, email, createdBy: userId, days: QUOTE_LINK_DAYS });
+    return { url: await portalLinkUrl(token, `/portal/quotes/${q.id}`), canAccept: portal.features.quotes };
+  } catch (e) {
+    console.error("[quote portal link]", e);
+    return null;
+  }
+}
+
 async function loadQuote(tenantId: number, id: number) {
   const [q] = await db.select().from(quotes).where(and(eq(quotes.tenantId, tenantId), eq(quotes.id, id)));
   if (!q) throw new UserError("Quote not found.");
@@ -347,6 +367,8 @@ export async function sendQuote(id: number, opts: { email: string | null; messag
       const items = await db.select().from(quoteItems).where(and(eq(quoteItems.tenantId, user.tenantId), eq(quoteItems.quoteId, id))).orderBy(asc(quoteItems.sortOrder));
       const [contact] = q.contactId ? await db.select().from(customerContacts).where(and(eq(customerContacts.tenantId, user.tenantId), eq(customerContacts.id, q.contactId))) : [];
       const { company } = await getSettings(user.tenantId);
+      // "View and accept online": a customer portal sign-in link for this email that opens this quote.
+      const portalLink = await quotePortalLink(user.tenantId, q, email, contact ?? null, user.id);
       const subject = `Your quote from ${company.name}: ${q.title} (${quoteNo(q.number)})`;
       const text = [
         `Hello${contact ? ` ${contact.name.split(" ")[0]}` : ""},`,
@@ -369,7 +391,8 @@ export async function sendQuote(id: number, opts: { email: string | null; messag
         q.customerNotes ? `\n${q.customerNotes}` : ``,
         opts.message ? `\n${opts.message}` : ``,
         ``,
-        `Reply to this email or call ${company.phone} to approve.`,
+        ...(portalLink ? [portalLink.canAccept ? `View and accept online:` : `View your quote online:`, portalLink.url, ``] : []),
+        portalLink?.canAccept ? `Or reply to this email or call ${company.phone} to approve.` : `Reply to this email or call ${company.phone} to approve.`,
         ``,
         `${company.name} · ${company.address}`,
       ].join("\n");
@@ -394,7 +417,17 @@ export async function setQuoteOutcome(id: number, outcome: "accepted" | "decline
     if (q.status === "converted") throw new UserError("This quote is already a job.");
     await db
       .update(quotes)
-      .set({ status: outcome, respondedAt: outcome === "draft" ? null : new Date(), lostReason: outcome === "declined" || outcome === "expired" ? (reason?.trim() || null) : null, updatedAt: new Date() })
+      .set({
+        status: outcome,
+        respondedAt: outcome === "draft" ? null : new Date(),
+        lostReason: outcome === "declined" || outcome === "expired" ? (reason?.trim() || null) : null,
+        // Set by staff, not the customer: clear any earlier online answer (it stays in the history).
+        responseName: null,
+        responseEmail: null,
+        responseIp: null,
+        responseNote: null,
+        updatedAt: new Date(),
+      })
       .where(and(eq(quotes.tenantId, user.tenantId), eq(quotes.id, id)));
     const label = { accepted: "Customer accepted quote", declined: `Quote declined${reason ? `: ${reason}` : ""}`, expired: "Quote marked expired", draft: "Quote reopened as draft" }[outcome];
     await logActivity({ tenantId: user.tenantId, action: `quote.${outcome}`, entityType: "quote", entityId: id, quoteId: id, customerId: q.customerId, actorId: user.id, summary: label });

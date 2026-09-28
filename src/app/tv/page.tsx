@@ -4,7 +4,10 @@ import { today } from "@/lib/format";
 import { getLocations } from "@/lib/lookups";
 import { getBrand } from "@/lib/brand";
 import { ShopProvider } from "@/components/shop-context";
+import { loadBlocks, loadMachines } from "@/lib/schedule/queries";
+import { dayBounds } from "@/lib/schedule/time";
 import { TvBoard } from "./tv-board";
+import { MachinesTv } from "./machines-board";
 
 export const metadata = { title: "Production TV" };
 export const dynamic = "force-dynamic";
@@ -12,10 +15,21 @@ export const dynamic = "force-dynamic";
 /**
  * Production TV mode: big, glanceable, NO financial information.
  * Open on the shop monitor (signed in as any production account). Refreshes itself.
+ * /tv?view=machines shows today's equipment schedule instead of the job board.
  */
-export default async function TvPage({ searchParams }: { searchParams: Promise<{ location?: string }> }) {
+export default async function TvPage({ searchParams }: { searchParams: Promise<{ location?: string; view?: string }> }) {
   const user = await requirePagePermission("jobs.view");
-  const { location } = await searchParams;
+  const { location, view } = await searchParams;
+  if (view === "machines") {
+    const t = today();
+    const day = dayBounds(t);
+    const [machines, blocks, brand] = await Promise.all([loadMachines(user.tenantId), loadBlocks(user.tenantId, day.start, day.end), getBrand(user.tenantId)]);
+    return (
+      <ShopProvider value={{ jobPrefix: brand.jobPrefix }}>
+        <MachinesTv brand={brand} machines={machines} blocks={blocks.map((b) => ({ ...b, notes: null }))} today={t} />
+      </ShopProvider>
+    );
+  }
   const [board, locations, brand] = await Promise.all([boardJobs({ ...user, role: "production" }), getLocations(user.tenantId), getBrand(user.tenantId)]);
   const all = board.filter((j) => j.status !== "completed" && (!location || j.locationCode === location));
   const t = today();

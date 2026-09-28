@@ -5,6 +5,7 @@ import { Factory, Loader2, Minus, PackagePlus, Pencil, Plus, ShoppingCart, Trash
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Confirm } from "@/components/ui/confirm";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input, MoneyInput, Select, Textarea } from "@/components/ui/input";
 import Link from "next/link";
@@ -71,6 +72,14 @@ export function SaleBuilder({ categories, taxRate, canCreateJobs, today }: { cat
   const ratePct = `${(taxRate * 100).toFixed(2).replace(/\.?0+$/, "")}%`;
   const customerReady = walkIn || !!customer;
 
+  // Don't lose a half-rung-up sale to a reload or a closed tab.
+  React.useEffect(() => {
+    if (!lines.length || pending) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [lines.length, pending]);
+
   const openNew = (cat: CounterCategory | null) => {
     const isPrint = cat?.kind === "print";
     const size = isPrint ? (/card/i.test(cat!.name) ? PRINT_SIZES[0] : /post/i.test(cat!.name) ? PRINT_SIZES[1] : PRINT_SIZES[3]) : null;
@@ -130,7 +139,7 @@ export function SaleBuilder({ categories, taxRate, canCreateJobs, today }: { cat
   };
 
   return (
-    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_22rem] xl:grid-cols-[minmax(0,1fr)_26rem]">
+    <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_22rem] xl:grid-cols-[minmax(0,1fr)_26rem]">
       <div className="min-w-0 space-y-5">
         {/* Customer */}
         <Card className="p-4">
@@ -179,14 +188,16 @@ export function SaleBuilder({ categories, taxRate, canCreateJobs, today }: { cat
       </div>
 
       {/* The sale: lines, totals and pay (right column on wide screens, so it's always in view) */}
-      <div className="space-y-4 lg:order-last">
-      <Card>
+      <div className="min-w-0 space-y-4 lg:order-last">
+        <Card id="counter-cart" className="scroll-mt-20">
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
             <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">This sale</p>
             {lines.length > 0 && (
-              <button type="button" className="text-sm text-slate-500 hover:text-red-700" onClick={() => setLines([])}>
-                Clear all
-              </button>
+              <Confirm title="Clear this sale?" description="All items on it are removed." confirmLabel="Clear all" onConfirm={() => setLines([])}>
+                <button type="button" className="text-sm text-slate-500 hover:text-red-700">
+                  Clear all
+                </button>
+              </Confirm>
             )}
           </div>
           {lines.length === 0 ? (
@@ -273,6 +284,26 @@ export function SaleBuilder({ categories, taxRate, canCreateJobs, today }: { cat
       </div>
 
       <LineEditor line={editing} customerId={walkIn ? null : customer?.id ?? null} categories={categories} onCancel={() => setEditing(null)} onSave={saveLine} />
+
+      {/* Phones & small tablets: the cart is below the product list, so keep the total in reach. */}
+      {lines.length > 0 && (
+        <>
+          <div className="h-20 lg:hidden" aria-hidden />
+          <div className="fixed inset-x-0 bottom-[calc(3.7rem+env(safe-area-inset-bottom))] z-30 border-t border-slate-200 bg-white/95 px-4 py-2.5 shadow-[0_-4px_12px_rgba(15,23,42,0.08)] backdrop-blur lg:hidden">
+            <div className="mx-auto flex max-w-3xl items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm text-slate-500">
+                  {lines.length} item{lines.length === 1 ? "" : "s"} · incl. tax
+                </p>
+                <p className="text-2xl font-bold leading-tight tabular text-slate-900">{money(totals.totalCents)}</p>
+              </div>
+              <Button variant="success" size="lg" className="h-12" onClick={() => document.getElementById("counter-cart")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+                Review &amp; pay
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -524,7 +555,7 @@ function LineEditor({ line, customerId, categories, onCancel, onSave }: { line: 
             Charge sales tax on this item
           </label>
 
-          <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-4">
+          <div className="sticky -bottom-5 z-10 -mx-5 flex items-center justify-between gap-3 border-t border-slate-200 bg-white px-5 pb-5 pt-3">
             <p className="text-lg font-semibold tabular text-slate-900">{money(total)}</p>
             <div className="flex gap-2">
               <Button size="lg" onClick={onCancel}>

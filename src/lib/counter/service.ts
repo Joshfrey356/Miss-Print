@@ -10,8 +10,9 @@ import { fmtDate, invoiceNo, money, today } from "@/lib/format";
 import { getSettings } from "@/lib/settings";
 import { getJobPrefix, nextNumber } from "@/lib/tenant";
 import { changeJobStatus, convertQuoteToJob } from "@/lib/jobs/service";
+import { syncJobReservations } from "@/lib/inventory/service";
 import { createInvoiceFromJob, recordPayment, voidInvoice } from "@/lib/money/service";
-import { cartTotals, cashPayment, dayTotals, overShort, overShortLabel } from "./math";
+import { cartTotals, cashPayment, dayTotals, expectedDrawer, overShort, overShortLabel } from "./math";
 import { dayPayments, getCounterSale } from "./queries";
 import { receiptEmail } from "./receipt";
 import { priceCounterItem } from "./pricing";
@@ -180,6 +181,7 @@ export async function createCounterSale(tenantId: number, input: SaleInput, acto
         })),
       );
       await tx.update(invoices).set({ jobId: job!.id }).where(and(eq(invoices.tenantId, tenantId), eq(invoices.id, inv!.id)));
+      await syncJobReservations(tx, tenantId, job!.id, actor.id);
       await tx.insert(jobStatusHistory).values({ tenantId, jobId: job!.id, fromStatus: null, toStatus: "new", changedBy: actor.id, note: "Job created at the front counter" });
       await logActivity(
         { tenantId, action: "job.created", entityType: "job", entityId: job!.id, jobId: job!.id, customerId, actorId: actor.id, summary: `Created at the front counter (${invoiceNo(number)})` },
@@ -290,13 +292,15 @@ export async function emailReceipt(tenantId: number, invoiceId: number, to: stri
 /** Save the end-of-day drawer count. Totals come from the day's (non-voided) payments at save time. */
 export async function closeRegister(
   tenantId: number,
-  input: { businessDate: string; locationId: number | null; countedCashCents: number; notes: string | null },
+  input: { businessDate: string; locationId: number | null; openingFloatCents: number; countedCashCents: number; notes: string | null },
   actor: Actor,
 ) {
   if (input.businessDate > today()) throw new UserError("You can't close a day that hasn't happened yet.");
   const pays = await dayPayments(tenantId, input.businessDate);
   const d = dayTotals(pays.map((p) => ({ method: p.method, amountCents: p.amountCents })));
-  const diff = overShort(input.countedCashCents, d.expectedCashCents);
+  // Expected in the drawer = starting cash + the day's cash payments (change is already netted out).
+  const expected = expectedDrawer(input.openingFloatCents, d.expectedCashCents);
+  const diff = overShort(input.countedCashCents, expected);
   return db.transaction(async (tx) => {
     const [row] = await tx
       .insert(registerCloses)
@@ -304,7 +308,8 @@ export async function closeRegister(
         tenantId,
         locationId: input.locationId,
         businessDate: input.businessDate,
-        expectedCashCents: d.expectedCashCents,
+        openingFloatCents: input.openingFloatCents,
+        expectedCashCents: expected,
         countedCashCents: input.countedCashCents,
         totals: d.totals,
         notes: input.notes,
@@ -317,8 +322,8 @@ export async function closeRegister(
         action: "register.closed",
         entityType: "payment",
         actorId: actor.id,
-        summary: `Closed the register for ${fmtDate(input.businessDate, { year: true })}: counted ${money(input.countedCashCents)} cash, expected ${money(d.expectedCashCents)} (${overShortLabel(diff, money)})`,
-        data: { registerCloseId: row!.id, totals: d.totals, overShortCents: diff },
+        summary: `Closed the register for ${fmtDate(input.businessDate, { year: true })}: counted ${money(input.countedCashCents)} cash, expected ${money(expected)}${input.openingFloatCents ? ` incl. ${money(input.openingFloatCents)} starting cash` : ""} (${overShortLabel(diff, money)})`,
+        data: { registerCloseId: row!.id, totals: d.totals, openingFloatCents: input.openingFloatCents, overShortCents: diff },
       },
       tx,
     );

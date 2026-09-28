@@ -6,9 +6,9 @@ import { QuoteBuilder } from "@/components/quotes/quote-builder";
 
 export const metadata = { title: "New Quote" };
 
-export default async function NewQuotePage({ searchParams }: { searchParams: Promise<{ customerId?: string }> }) {
+export default async function NewQuotePage({ searchParams }: { searchParams: Promise<{ customerId?: string; title?: string }> }) {
   const user = await requirePagePermission("quotes.edit");
-  const { customerId } = await searchParams;
+  const { customerId, title } = await searchParams;
   const [opts, customer] = await Promise.all([builderOptions(user.tenantId), customerId ? pickedCustomer(user.tenantId, Number(customerId)) : Promise.resolve(null)]);
   return (
     <>
@@ -17,7 +17,7 @@ export default async function NewQuotePage({ searchParams }: { searchParams: Pro
         {...opts}
         canSeeCost={can(user.role, "margins.view")}
         currentUserId={user.id}
-        initial={{ id: null, customer, contactId: customer?.contacts.find((c) => c.isPrimary)?.id ?? null, title: "", salespersonId: customer?.salespersonId ?? user.id, locationId: null, needsDesign: false, needsInstall: false, isRush: false, dueDate: null, validUntil: null, internalNotes: null, customerNotes: null, items: [] }}
+        initial={{ id: null, customer, contactId: customer?.contacts.find((c) => c.isPrimary)?.id ?? null, title: title?.slice(0, 200) ?? "", salespersonId: customer?.salespersonId ?? user.id, locationId: null, needsDesign: false, needsInstall: false, isRush: false, dueDate: null, validUntil: null, internalNotes: null, customerNotes: null, items: [] }}
       />
     </>
   );

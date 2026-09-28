@@ -24,6 +24,9 @@ export default async function BoardPage() {
             <LinkButton href="/tv" target="_blank">
               <Tv className="size-4" /> TV mode
             </LinkButton>
+            <LinkButton href="/tv?view=machines" target="_blank">
+              <Tv className="size-4" /> Machines TV
+            </LinkButton>
           </>
         }
       />

@@ -25,6 +25,7 @@ import { ContactsCard } from "../_components/contacts-card";
 import { NotesCard } from "../_components/notes-card";
 import { ActivityCard, FilesTab, InvoicesTab, JobList, JobsTable, MessagesTab, PastOrders, QuoteList, QuotesTable } from "./sections";
 import { QuickBooksStatus } from "@/components/accounting/quickbooks-status";
+import { CustomerPortalCard } from "@/components/portal/customer-portal-card";
 
 type Tab = "overview" | "jobs" | "quotes" | "invoices" | "files" | "messages";
 const JOB_SORTS: CustomerJobSort[] = ["number", "title", "status", "due", "created", "total"];
@@ -314,6 +315,7 @@ async function Overview({
       </div>
       <div className="space-y-5">
         <ContactsCard customerId={id} contacts={contacts} canEdit={can.edit} />
+        <CustomerPortalCard tenantId={tenantId} customerId={id} canEdit={can.edit} />
         <NotesCard customerId={id} notes={notes} canEdit={can.edit} />
         {billingAddress && (
           <Card className="px-5 py-4">

@@ -12,6 +12,7 @@ import { runAction, UserError, str, int, num, bool } from "@/lib/actions";
 import { diff, logActivity } from "@/lib/activity";
 import { notify } from "@/lib/notifications";
 import { changeJobStatus, recalcJobTotals, reorderJob, type ReorderOptions } from "@/lib/jobs/service";
+import { syncJobReservations } from "@/lib/inventory/service";
 import { BOARD_COLUMNS, STATUS_LABELS, nextStatus } from "@/lib/jobs/workflow";
 import { jobNo, money, parseMoney } from "@/lib/format";
 import { createInvoiceFromJob } from "@/lib/money/service";
@@ -179,6 +180,7 @@ export async function createJob(_prev: unknown, fd: FormData) {
         recommendedCents: priceCents,
       });
       await recalcJobTotals(tx, tenantId, job!.id);
+      await syncJobReservations(tx, tenantId, job!.id, user.id);
       await tx.insert(jobStatusHistory).values({ tenantId, jobId: job!.id, fromStatus: null, toStatus: status, changedBy: user.id, note: "Job created" });
       await logActivity({ tenantId, action: "job.created", entityType: "job", entityId: job!.id, jobId: job!.id, customerId, actorId: user.id, summary: "Created job" }, tx);
       await notify(
@@ -407,6 +409,7 @@ export async function saveJobItem(jobId: number, itemId: number | null, fd: Form
         await logActivity({ tenantId, action: "job.item_added", entityType: "job", entityId: jobId, jobId, actorId: user.id, summary: `Added item: ${description}${seeMoney ? ` (${money(values.priceCents ?? 0)})` : ""}` }, tx);
       }
       await recalcJobTotals(tx, tenantId, job.id);
+      await syncJobReservations(tx, tenantId, job.id, user.id);
     });
     revalidateJob(job.number);
   }, "Saved");
@@ -421,6 +424,7 @@ export async function removeJobItem(jobId: number, itemId: number) {
       if (!item) throw new UserError("Item not found.");
       await logActivity({ tenantId: user.tenantId, action: "job.item_removed", entityType: "job", entityId: jobId, jobId, actorId: user.id, summary: `Removed item: ${item.description}`, data: { before: item } }, tx);
       await recalcJobTotals(tx, user.tenantId, job.id);
+      await syncJobReservations(tx, user.tenantId, job.id, user.id);
     });
     revalidateJob(job.number);
   }, "Item removed");
@@ -454,8 +458,12 @@ export async function archiveJob(jobId: number) {
   return runAction(async () => {
     const user = await requirePermission("jobs.edit");
     const job = await loadJob(user.tenantId, jobId);
-    await db.update(jobs).set({ archivedAt: new Date() }).where(and(eq(jobs.tenantId, user.tenantId), eq(jobs.id, job.id)));
-    await logActivity({ tenantId: user.tenantId, action: "job.archived", entityType: "job", entityId: jobId, jobId, actorId: user.id, summary: "Archived job" });
+    await db.transaction(async (tx) => {
+      await tx.update(jobs).set({ archivedAt: new Date() }).where(and(eq(jobs.tenantId, user.tenantId), eq(jobs.id, job.id)));
+      await logActivity({ tenantId: user.tenantId, action: "job.archived", entityType: "job", entityId: jobId, jobId, actorId: user.id, summary: "Archived job" }, tx);
+      // Reserved stock goes back on the shelf.
+      await syncJobReservations(tx, user.tenantId, job.id, user.id);
+    });
     revalidateJob(job.number);
   }, "Job archived");
 }

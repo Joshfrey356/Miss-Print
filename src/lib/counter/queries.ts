@@ -182,3 +182,46 @@ export async function listRegisterCloses(tenantId: number, opts: { date?: string
     .orderBy(desc(registerCloses.businessDate), desc(registerCloses.createdAt))
     .limit(opts.limit ?? 60);
 }
+
+/**
+ * The starting cash (float) used at the last close, per location ("" = no location), to prefill
+ * tomorrow's count. Most shops leave the same float in the drawer every night.
+ */
+export async function lastFloats(tenantId: number): Promise<Record<string, number>> {
+  const rows = await db
+    .select({ locationId: registerCloses.locationId, float: registerCloses.openingFloatCents })
+    .from(registerCloses)
+    .where(eq(registerCloses.tenantId, tenantId))
+    .orderBy(desc(registerCloses.businessDate), desc(registerCloses.createdAt))
+    .limit(200);
+  const out: Record<string, number> = {};
+  for (const r of rows) {
+    const k = String(r.locationId ?? "");
+    if (!(k in out)) out[k] = r.float;
+  }
+  return out;
+}
+
+/**
+ * The receipt this person printed last: their most recent payment taken or counter sale rung up
+ * (whichever is newer). For the counter's "Reprint last receipt" button.
+ */
+export async function lastReceipt(tenantId: number, userId: number): Promise<{ invoiceId: number; number: number } | null> {
+  const [pay, sale] = await Promise.all([
+    db
+      .select({ invoiceId: payments.invoiceId, number: invoices.number, at: payments.createdAt })
+      .from(payments)
+      .innerJoin(invoices, eq(invoices.id, payments.invoiceId))
+      .where(and(eq(payments.tenantId, tenantId), eq(payments.recordedBy, userId), isNull(payments.voidedAt)))
+      .orderBy(desc(payments.createdAt))
+      .limit(1),
+    db
+      .select({ invoiceId: invoices.id, number: invoices.number, at: invoices.createdAt })
+      .from(invoices)
+      .where(and(eq(invoices.tenantId, tenantId), eq(invoices.createdBy, userId), eq(invoices.source, "counter"), ne(invoices.status, "void")))
+      .orderBy(desc(invoices.createdAt))
+      .limit(1),
+  ]);
+  const best = [pay[0], sale[0]].filter((x): x is NonNullable<typeof x> => !!x).sort((a, b) => b.at.getTime() - a.at.getTime())[0];
+  return best ? { invoiceId: best.invoiceId, number: best.number } : null;
+}

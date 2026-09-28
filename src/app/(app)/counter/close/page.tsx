@@ -6,7 +6,7 @@ import { addDays, fmtDate, fmtDateTime, money, today } from "@/lib/format";
 import { PAYMENT_METHOD_LABELS, PAYMENT_METHODS } from "@/lib/money/labels";
 import { getLocations } from "@/lib/lookups";
 import { dayTotals, overShort, overShortLabel } from "@/lib/counter/math";
-import { dayPayments, listRegisterCloses } from "@/lib/counter/queries";
+import { dayPayments, lastFloats, listRegisterCloses } from "@/lib/counter/queries";
 import { Badge } from "@/components/ui/badge";
 import { LinkButton } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -26,11 +26,12 @@ export default async function ClosePage({ searchParams }: Props) {
   const now = today();
   const date = sp.date && /^\d{4}-\d{2}-\d{2}$/.test(sp.date) && sp.date <= now ? sp.date : now;
   const showHistory = can(user.role, "money.view");
-  const [pays, closesToday, history, locations] = await Promise.all([
+  const [pays, closesToday, history, locations, floats] = await Promise.all([
     dayPayments(user.tenantId, date),
     listRegisterCloses(user.tenantId, { date }),
     showHistory ? listRegisterCloses(user.tenantId, { limit: 30 }) : Promise.resolve([]),
     getLocations(user.tenantId),
+    lastFloats(user.tenantId),
   ]);
   const d = dayTotals(pays.map((p) => ({ method: p.method, amountCents: p.amountCents })));
   const tenderedCash = pays.filter((p) => p.method === "cash").reduce((a, p) => a + (p.tenderedCents ?? p.amountCents), 0);
@@ -83,18 +84,18 @@ export default async function ClosePage({ searchParams }: Props) {
             </tbody>
           </Table>
           <CardBody className="border-t border-slate-100 text-sm text-slate-600">
-            Cash expected in the drawer: <strong className="text-slate-900">{money(d.expectedCashCents)}</strong>
+            Cash taken: <strong className="text-slate-900">{money(d.expectedCashCents)}</strong>
             {tenderedCash > d.expectedCashCents && (
               <> (customers handed over {money(tenderedCash)}; {money(tenderedCash - d.expectedCashCents)} went back as change)</>
             )}
-            .
+. Expected in the drawer = starting cash + this.
           </CardBody>
         </Card>
 
         <Card>
           <CardHeader title="Count the drawer" />
           <CardBody>
-            <CloseForm date={date} expectedCents={d.expectedCashCents} locations={shopLocations} defaultLocationId={user.locationId} />
+            <CloseForm key={date} date={date} cashTakenCents={d.expectedCashCents} locations={shopLocations} defaultLocationId={user.locationId} lastFloats={floats} />
           </CardBody>
         </Card>
       </div>
@@ -123,6 +124,7 @@ function ClosesTable({ rows, showDate }: { rows: Awaited<ReturnType<typeof listR
         <tr>
           {showDate && <Th>Day</Th>}
           <Th>Location</Th>
+          <Th className="text-right">Starting cash</Th>
           <Th className="text-right">Expected cash</Th>
           <Th className="text-right">Counted</Th>
           <Th>Over / short</Th>
@@ -138,6 +140,7 @@ function ClosesTable({ rows, showDate }: { rows: Awaited<ReturnType<typeof listR
             <Tr key={c.id}>
               {showDate && <Td className="whitespace-nowrap">{fmtDate(c.businessDate, { year: true })}</Td>}
               <Td>{locationName ?? "—"}</Td>
+              <Td className="text-right tabular">{money(c.openingFloatCents)}</Td>
               <Td className="text-right tabular">{money(c.expectedCashCents)}</Td>
               <Td className="text-right tabular">{money(c.countedCashCents)}</Td>
               <Td>
