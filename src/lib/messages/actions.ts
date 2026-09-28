@@ -10,6 +10,7 @@ import { saveUpload } from "@/lib/files";
 import { notify, parseMentions } from "@/lib/notifications";
 import { logActivity } from "@/lib/activity";
 import { jobNo } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 import { canSeeChannel, cleanHandle, getChannel, MENTION_GROUPS } from "./channels";
 
 const MAX_BODY = 5000;
@@ -78,7 +79,7 @@ export async function postMessage(formData: FormData): Promise<ActionResult<{ id
       .filter((p) => !channel || canSeeChannel(p.role, channel.key))
       .map((p) => p.id);
 
-    const where = job ? jobNo(job.number) : `#${channel!.label}`;
+    const where = job ? jobNo(job.number, await getJobPrefix(user.tenantId)) : `#${channel!.label}`;
     const link = job ? `/jobs/${job.number}?tab=chat` : `/messages?channel=${channel!.key}`;
     const firstName = user.name.split(" ")[0];
     const preview = body ? (body.length > 140 ? body.slice(0, 137) + "…" : body) : file ? `Attached ${file.name}` : "";

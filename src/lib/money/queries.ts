@@ -17,7 +17,8 @@ import {
   type ExpenseCategory,
   type PaymentMethod,
 } from "@/lib/db/schema";
-import { addDays, today } from "@/lib/format";
+import { addDays, parseNumberInput, today } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 import { getSettings } from "@/lib/settings";
 import { addMonths, LOW_MARGIN, monthEnd } from "./labels";
 
@@ -185,7 +186,7 @@ export const INVOICE_FILTERS = ["unpaid", "overdue", "paid", "void", "all"] as c
 export type InvoiceFilter = (typeof INVOICE_FILTERS)[number];
 export type InvoiceListParams = { q?: string; status?: string; sort?: string; dir?: string; page?: string; from?: string; to?: string };
 
-function invoiceWhere(tenantId: number, p: InvoiceListParams, now = today()) {
+function invoiceWhere(tenantId: number, jobPrefix: string, p: InvoiceListParams, now = today()) {
   const conds: SQL[] = [eq(invoices.tenantId, tenantId)];
   const status = (INVOICE_FILTERS as readonly string[]).includes(p.status ?? "") ? (p.status as InvoiceFilter) : "all";
   if (status === "unpaid") conds.push(inArray(invoices.status, OPEN));
@@ -196,8 +197,10 @@ function invoiceWhere(tenantId: number, p: InvoiceListParams, now = today()) {
   if (isYmd(p.to)) conds.push(lte(invoices.issueDate, p.to));
   const q = p.q?.trim();
   if (q) {
-    const n = q.match(/^(?:inv|mp)?[-\s#]?(\d{3,7})$/i);
-    if (n) conds.push(or(eq(invoices.number, Number(n[1])), eq(jobs.number, Number(n[1])))!);
+    // "INV-7001" → invoice number, "MP-10428" (this shop's job prefix) → job number, bare 3+ digits → either.
+    const typed = parseNumberInput(q);
+    const n = typed && (typed.letters ? [jobPrefix, "INV"].includes(typed.letters) : String(typed.n).length >= 3) ? typed : null;
+    if (n) conds.push(or(n.letters !== jobPrefix ? eq(invoices.number, n.n) : undefined, n.letters !== "INV" ? eq(jobs.number, n.n) : undefined)!);
     else conds.push(or(ilike(customers.name, likeEsc(q)), ilike(invoices.poNumber, likeEsc(q)), ilike(jobs.title, likeEsc(q)))!);
   }
   return { where: and(...conds), status };
@@ -213,7 +216,7 @@ const INVOICE_SORTS = {
 } as const;
 
 export async function listInvoices(tenantId: number, p: InvoiceListParams, opts: { all?: boolean } = {}) {
-  const { where, status } = invoiceWhere(tenantId, p);
+  const { where, status } = invoiceWhere(tenantId, await getJobPrefix(tenantId), p);
   const sortKey = (p.sort && Object.hasOwn(INVOICE_SORTS, p.sort) ? p.sort : "number") as keyof typeof INVOICE_SORTS;
   const dir = p.dir === "asc" ? asc : desc;
   const page = pageOf(p.page);
@@ -384,8 +387,10 @@ export async function listExpenses(tenantId: number, p: ExpenseListParams, opts:
   if (p.attributed === "overhead") conds.push(isNull(expenses.jobId));
   const q = p.q?.trim();
   if (q) {
-    const n = q.match(/^(?:mp)?[-\s#]?(\d{4,7})$/i);
-    conds.push(or(ilike(expenses.vendorName, likeEsc(q)), ilike(expenses.notes, likeEsc(q)), n ? eq(jobs.number, Number(n[1])) : undefined)!);
+    const typed = parseNumberInput(q);
+    const jobPrefix = typed?.letters ? await getJobPrefix(tenantId) : "";
+    const n = typed && (typed.letters ? typed.letters === jobPrefix : String(typed.n).length >= 4) ? typed.n : null;
+    conds.push(or(ilike(expenses.vendorName, likeEsc(q)), ilike(expenses.notes, likeEsc(q)), n != null ? eq(jobs.number, n) : undefined)!);
   }
   const page = pageOf(p.page);
   const base = db

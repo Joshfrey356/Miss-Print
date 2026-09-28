@@ -7,6 +7,7 @@ import { Chips, withParams } from "@/components/chips";
 import { InvoiceStatusBadge } from "@/components/status";
 import { cn } from "@/lib/utils";
 import { daysBetween, fmtDate, invoiceNo, jobNo, money, moneyShort, plural, timeAgo, today } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 import { getReceivables } from "@/lib/money/queries";
 import { AGING_LABELS, agingBucket, type AgingBucket } from "@/lib/money/service";
 import { SendReminderButton } from "./client";
@@ -25,6 +26,7 @@ const bucketLabel = (b: AgingBucket) => (b === "current" ? "Current (not due)" :
 
 export async function ReceivablesTab({ tenantId, params, canEdit }: { tenantId: number; params: SP; canEdit: boolean }) {
   const now = today();
+  const prefix = await getJobPrefix(tenantId);
   const all = (await getReceivables(tenantId)).map((r) => ({ ...r, bucket: agingBucket(r.dueDate, now), age: Math.max(0, daysBetween(r.dueDate, now)) }));
   const p = { ...params, tab: "receivables" };
   const bucket = BUCKETS.includes(params.bucket as AgingBucket) ? (params.bucket as AgingBucket) : undefined;
@@ -157,7 +159,7 @@ export async function ReceivablesTab({ tenantId, params, canEdit }: { tenantId: 
                     <Link href={`/money/invoices/${r.id}`} className="font-medium text-brand-700 hover:underline">
                       {invoiceNo(r.number)}
                     </Link>
-                    {r.jobNumber && <span className="block text-sm text-slate-500">{jobNo(r.jobNumber)}</span>}
+                    {r.jobNumber && <span className="block text-sm text-slate-500">{jobNo(r.jobNumber, prefix)}</span>}
                   </Td>
                   <Td className="text-right">
                     <Num className="font-semibold text-slate-900">{money(r.balance)}</Num>

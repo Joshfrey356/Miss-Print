@@ -6,6 +6,7 @@ import { Pagination, SortTh, Table, Td, Th, THead, Tr } from "@/components/ui/ta
 import { Chips, withParams } from "@/components/chips";
 import { cn } from "@/lib/utils";
 import { addDays, fmtDate, jobNo, money, moneyShort, pct, plural, today } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 import { getProfitability, PAGE_SIZE } from "@/lib/money/queries";
 import { LOW_MARGIN } from "@/lib/money/labels";
 import { marginOf } from "@/lib/pricing/engine";
@@ -23,7 +24,7 @@ export async function ProfitabilityTab({ tenantId, params }: { tenantId: number;
   const now = today();
   const from = isYmd(params.from) ? params.from! : addDays(now, -90);
   const to = isYmd(params.to) ? params.to! : now;
-  const data = await getProfitability(tenantId, { from, to, sort: params.sort, dir: params.dir, page: params.page, low: params.low });
+  const [data, prefix] = await Promise.all([getProfitability(tenantId, { from, to, sort: params.sort, dir: params.dir, page: params.page, low: params.low }), getJobPrefix(tenantId)]);
   const p = { ...params, tab: "profitability" };
   const s = data.summary;
   const overall = marginOf(s.revenue, s.cost);
@@ -140,7 +141,7 @@ export async function ProfitabilityTab({ tenantId, params }: { tenantId: number;
                         <Tr key={r.id} className={low ? "bg-red-50/60" : "hover:bg-slate-50/70"}>
                           <Td className="max-w-72">
                             <Link href={`/jobs/${r.number}?tab=money`} className="font-medium text-brand-700 hover:underline">
-                              {jobNo(r.number)}
+                              {jobNo(r.number, prefix)}
                             </Link>
                             <span className="block truncate text-sm text-slate-600">
                               {r.title}

@@ -8,6 +8,7 @@ import { notify } from "@/lib/notifications";
 import { changeJobStatus } from "@/lib/jobs/service";
 import { nextStatus } from "@/lib/jobs/workflow";
 import { jobNo } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 import type { SessionUser } from "@/lib/auth";
 
 export { FOLDER_LABELS } from "@/lib/files-shared";
@@ -86,7 +87,7 @@ export async function saveUpload(
             const next = nextStatus(job);
             if (next) await changeJobStatus(tx, job, next, actor, { reason: "Artwork received" });
           }
-          await notify({ tenantId, userIds: [job.designerId, job.salespersonId], kind: "artwork", title: `Artwork uploaded to ${jobNo(job.number)}`, body: filename, link: `/jobs/${job.number}?tab=files`, actorId: user.id }, tx);
+          await notify({ tenantId, userIds: [job.designerId, job.salespersonId], kind: "artwork", title: `Artwork uploaded to ${jobNo(job.number, await getJobPrefix(tenantId))}`, body: filename, link: `/jobs/${job.number}?tab=files`, actorId: user.id }, tx);
         }
       }
     }

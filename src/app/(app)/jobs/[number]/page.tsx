@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { AlertTriangle, Building2, CalendarClock, FileText, Mail, MapPin, Phone, RotateCcw, Truck } from "lucide-react";
-import { requirePagePermission } from "@/lib/auth";
+import { getCurrentUser, requirePagePermission } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { db } from "@/lib/db";
 import { expenses } from "@/lib/db/schema";
@@ -13,6 +13,7 @@ import { getJobMessages } from "@/lib/messages/queries";
 import { getTasksFor } from "@/lib/tasks/queries";
 import { FULFILLMENT_LABELS, WORK_STATUSES } from "@/lib/jobs/workflow";
 import { dueLabel, fmtDate, fmtDateTime, jobNo, parseJobNumber, quoteNo, today } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { LinkTabs } from "@/components/ui/tabs";
 import { JobStatusBadge, PriorityBadge } from "@/components/status";
@@ -30,9 +31,9 @@ import { TaskList } from "@/components/tasks/task-list";
 import { cn } from "@/lib/utils";
 
 export async function generateMetadata({ params }: { params: Promise<{ number: string }> }) {
-  const { number } = await params;
+  const [{ number }, user] = await Promise.all([params, getCurrentUser()]);
   const n = parseJobNumber(number);
-  return { title: n ? jobNo(n) : number };
+  return { title: n && user ? jobNo(n, await getJobPrefix(user.tenantId)) : number };
 }
 
 export default async function JobPage({ params, searchParams }: { params: Promise<{ number: string }>; searchParams: Promise<{ tab?: string }> }) {
@@ -41,7 +42,7 @@ export default async function JobPage({ params, searchParams }: { params: Promis
   const { tab = "details" } = await searchParams;
   const number = parseJobNumber(raw);
   if (!number) notFound();
-  const d = await getJobDetail(number, user);
+  const [d, prefix] = await Promise.all([getJobDetail(number, user), getJobPrefix(user.tenantId)]);
   if (!d) notFound();
   const { job } = d;
 
@@ -93,7 +94,7 @@ export default async function JobPage({ params, searchParams }: { params: Promis
         <div className="mt-2 flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-lg font-semibold text-brand-700">{jobNo(job.number)}</span>
+              <span className="text-lg font-semibold text-brand-700">{jobNo(job.number, prefix)}</span>
               <JobStatusBadge status={job.status} />
               <PriorityBadge priority={job.priority} />
               {overdue && (
@@ -136,7 +137,7 @@ export default async function JobPage({ params, searchParams }: { params: Promis
           <p className="mt-3 inline-flex items-center gap-1.5 text-sm text-slate-500">
             <RotateCcw className="size-4" /> Reorder of{" "}
             <Link href={`/jobs/${d.reorderOf.number}`} className="font-medium text-brand-700 hover:underline">
-              {jobNo(d.reorderOf.number)}
+              {jobNo(d.reorderOf.number, prefix)}
             </Link>
           </p>
         )}
@@ -217,7 +218,7 @@ export default async function JobPage({ params, searchParams }: { params: Promis
             <Card className="xl:hidden">
               <CardHeader title="Job chat" description="Questions, updates and @mentions — kept with the job." />
               <CardBody>
-                <JobChat jobId={job.id} jobNumber={job.number} messages={messages} users={chatUsers} currentUserId={user.id} canAttach={can(r, "files.upload")} />
+                <JobChat jobId={job.id} jobNumber={job.number} jobPrefix={prefix} messages={messages} users={chatUsers} currentUserId={user.id} canAttach={can(r, "files.upload")} />
               </CardBody>
             </Card>
           )}
@@ -312,7 +313,7 @@ export default async function JobPage({ params, searchParams }: { params: Promis
             <Card className="hidden xl:block">
               <CardHeader title="Job chat" />
               <CardBody>
-                <JobChat jobId={job.id} jobNumber={job.number} messages={messages} users={chatUsers} currentUserId={user.id} canAttach={can(r, "files.upload")} listClassName="max-h-[28rem]" />
+                <JobChat jobId={job.id} jobNumber={job.number} jobPrefix={prefix} messages={messages} users={chatUsers} currentUserId={user.id} canAttach={can(r, "files.upload")} listClassName="max-h-[28rem]" />
               </CardBody>
             </Card>
           )}

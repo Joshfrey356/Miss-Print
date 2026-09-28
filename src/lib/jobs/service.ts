@@ -16,10 +16,10 @@ import {
 } from "@/lib/db/schema";
 import { logActivity } from "@/lib/activity";
 import { notify } from "@/lib/notifications";
-import { jobNo, today } from "@/lib/format";
+import { jobNo as fmtJobNo, today } from "@/lib/format";
 import { STATUS_LABELS, WORK_STATUSES, afterApproval } from "@/lib/jobs/workflow";
 import { taxFor } from "@/lib/pricing/engine";
-import { nextNumber } from "@/lib/tenant";
+import { getJobPrefix, nextNumber } from "@/lib/tenant";
 import type { ItemPricingRequest } from "@/lib/pricing/server";
 import { priceLine, storedBreakdown } from "@/lib/quotes/pricing";
 import type { StoredBreakdown } from "@/lib/quotes/print-options";
@@ -82,7 +82,7 @@ export async function changeJobStatus(
 
   // Tell the next person in line.
   const link = `/jobs/${job.number}`;
-  const label = `${jobNo(job.number)} ${job.title}`;
+  const label = `${fmtJobNo(job.number, await getJobPrefix(tenantId))} ${job.title}`;
   const who =
     to === "design" ? [job.designerId] :
     to === "approved_for_production" ? [job.productionId] :
@@ -124,6 +124,8 @@ export async function recalcJobTotals(tx: Tx, tenantId: number, jobId: number) {
 /** One click: quote → job. Everything carries over; nobody re-types anything. */
 export async function convertQuoteToJob(quoteId: number, actor: Actor): Promise<{ number: number }> {
   const tenantId = actor.tenantId;
+  const prefix = await getJobPrefix(tenantId);
+  const jobNo = (n: number) => fmtJobNo(n, prefix);
   return db.transaction(async (tx) => {
     const [q] = await tx.select().from(quotes).where(and(eq(quotes.tenantId, tenantId), eq(quotes.id, quoteId))).for("update");
     if (!q) throw new Error("Quote not found");
@@ -217,6 +219,8 @@ export type ReorderOptions = {
 /** Duplicate a past job as a new one, keeping specs, artwork, materials, price and customer. */
 export async function reorderJob(sourceJobId: number, opts: ReorderOptions, actor: Actor): Promise<{ number: number }> {
   const tenantId = actor.tenantId;
+  const prefix = await getJobPrefix(tenantId);
+  const jobNo = (n: number) => fmtJobNo(n, prefix);
   return db.transaction(async (tx) => {
     const [src] = await tx.select().from(jobs).where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, sourceJobId)));
     if (!src) throw new Error("Job not found");

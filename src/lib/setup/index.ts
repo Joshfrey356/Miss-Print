@@ -10,6 +10,7 @@ import { hashPassword } from "@/lib/auth";
 import { saveSetting } from "@/lib/admin/settings-store";
 import { DEFAULT_COMPANY } from "@/lib/settings";
 import { uniqueSlug } from "@/lib/tenant";
+import { jobPrefixFor } from "@/lib/format";
 import { insertBaseData } from "./base-data";
 
 /**
@@ -25,7 +26,7 @@ export type NewShop = { shopName: string; name: string; email: string; password:
 async function createShop(tx: Tx, input: NewShop, passwordHash: string) {
   const [tenant] = await tx
     .insert(tenants)
-    .values({ name: input.shopName, slug: await uniqueSlug(tx, input.shopName) })
+    .values({ name: input.shopName, slug: await uniqueSlug(tx, input.shopName), jobPrefix: jobPrefixFor(input.shopName) })
     .returning();
   const result = await insertBaseData(tx, tenant!.id, { name: input.name, email: input.email, passwordHash }, { phone: input.phone, address: input.address });
   await saveSetting(

@@ -16,7 +16,8 @@ import {
   users,
   type JobStatus,
 } from "@/lib/db/schema";
-import { addDays, fmtSize, today } from "@/lib/format";
+import { addDays, fmtSize, parseNumberInput, today } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 import { ACTIVE_STATUSES, BOARD_COLUMNS, OPEN_STATUSES, READY_STATUSES, WORK_STATUSES } from "@/lib/jobs/workflow";
 import type { SessionUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
@@ -62,7 +63,7 @@ export const JOB_VIEWS: { key: string; label: string }[] = [
   { key: "all", label: "All" },
 ];
 
-function filterWhere(f: JobFilter, user: SessionUser): SQL[] {
+function filterWhere(f: JobFilter, user: SessionUser, jobPrefix: string): SQL[] {
   const t = today();
   const w: SQL[] = [isNull(jobs.archivedAt)];
   switch (f.view ?? "open") {
@@ -122,10 +123,12 @@ function filterWhere(f: JobFilter, user: SessionUser): SQL[] {
   if (f.q?.trim()) {
     const q = f.q.trim();
     const like = `%${q.replace(/[%_\\]/g, (m) => "\\" + m)}%`;
-    const num = q.match(/^(?:mp)?[-\s#]?(\d{4,7})$/i)?.[1];
+    // "LS-1002" / "ls1002" (this shop's prefix) or a bare 4+ digit number.
+    const typed = parseNumberInput(q);
+    const num = typed && (typed.letters ? typed.letters === jobPrefix : String(typed.n).length >= 4) ? typed.n : null;
     w.push(
       or(
-        num ? eq(jobs.number, Number(num)) : undefined,
+        num != null ? eq(jobs.number, num) : undefined,
         ilike(jobs.title, like),
         ilike(customers.name, like),
         ilike(jobs.description, like),
@@ -213,7 +216,7 @@ function decorate<T extends { locationCode: string | null; firstItem: { q: numbe
 export async function listJobs(f: JobFilter, user: SessionUser) {
   const pageSize = 30;
   const page = Math.max(1, f.page ?? 1);
-  const conds = filterWhere(f, user);
+  const conds = filterWhere(f, user, await getJobPrefix(user.tenantId));
   const dir = f.dir === "desc" ? desc : asc;
   const order =
     f.sort === "number" ? [dir(jobs.number)] :

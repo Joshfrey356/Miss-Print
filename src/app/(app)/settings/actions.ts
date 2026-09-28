@@ -9,7 +9,8 @@ import { locations, tenants } from "@/lib/db/schema";
 import { diff, logActivity } from "@/lib/activity";
 import { getSettings, type AutomationSettings, type CompanyProfile } from "@/lib/settings";
 import { saveSetting } from "@/lib/admin/settings-store";
-import { parseMoney } from "@/lib/format";
+import { normalizeJobPrefix, parseMoney } from "@/lib/format";
+import { getTenant } from "@/lib/tenant";
 import { newStorageKey, storage } from "@/lib/storage";
 import type { BusinessRules } from "@/lib/pricing/engine";
 
@@ -106,17 +107,39 @@ export async function saveCompanyProfile(_prev: Prev, fd: FormData): Promise<Act
     const next: CompanyProfile = companySchema.parse(
       Object.fromEntries(["name", "tagline", "phone", "email", "website", "address", "hours"].map((k) => [k, str(fd, k) ?? ""])),
     );
-    const { company } = await getSettings(user.tenantId);
+    const [{ company }, tenant] = await Promise.all([getSettings(user.tenantId), getTenant(user.tenantId)]);
+    const oldPrefix = tenant?.jobPrefix ?? "J";
+    // Job number prefix (MP → MP-10428). Only the letters shown change; job numbers stay the same.
+    const rawPrefix = str(fd, "jobPrefix");
+    const jobPrefix = rawPrefix == null ? oldPrefix : normalizeJobPrefix(rawPrefix);
+    if (!jobPrefix) throw new UserError("Use 1–5 letters for the job number prefix, like MP.");
     const changes = diff(company, next);
-    if (!changes) return;
+    const prefixChanged = jobPrefix !== oldPrefix;
+    if (!changes && !prefixChanged) return;
     await db.transaction(async (tx) => {
-      // The name is the shop's white-label brand (sidebar, sign-in page, proofs, emails).
-      if (next.name !== company.name) await tx.update(tenants).set({ name: next.name }).where(eq(tenants.id, user.tenantId));
-      await saveSetting(user.tenantId, "company", next, user.id, tx);
-      await logActivity(
-        { tenantId: user.tenantId, action: "setting.updated", entityType: "setting", actorId: user.id, summary: "Updated company profile", data: { key: "company", ...changes } },
-        tx,
-      );
+      if (changes) {
+        // The name is the shop's white-label brand (sidebar, sign-in page, proofs, emails).
+        if (next.name !== company.name) await tx.update(tenants).set({ name: next.name }).where(eq(tenants.id, user.tenantId));
+        await saveSetting(user.tenantId, "company", next, user.id, tx);
+        await logActivity(
+          { tenantId: user.tenantId, action: "setting.updated", entityType: "setting", actorId: user.id, summary: "Updated company profile", data: { key: "company", ...changes } },
+          tx,
+        );
+      }
+      if (prefixChanged) {
+        await tx.update(tenants).set({ jobPrefix }).where(eq(tenants.id, user.tenantId));
+        await logActivity(
+          {
+            tenantId: user.tenantId,
+            action: "setting.updated",
+            entityType: "setting",
+            actorId: user.id,
+            summary: `Changed the job number prefix from ${oldPrefix} to ${jobPrefix}`,
+            data: { key: "jobPrefix", before: { jobPrefix: oldPrefix }, after: { jobPrefix } },
+          },
+          tx,
+        );
+      }
     });
     revalidatePath("/", "layout");
   }, "Company profile saved");

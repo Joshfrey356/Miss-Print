@@ -12,6 +12,7 @@ import { NewMenu } from "@/components/shell/new-menu";
 import { SearchButton } from "@/components/shell/command-palette";
 import { NotificationBell } from "@/components/shell/notification-bell";
 import { UserMenu } from "@/components/shell/user-menu";
+import { ShopProvider } from "@/components/shop-context";
 
 /** White-label the browser tab: "<page> · <shop name>", with the shop's logo as the icon. */
 export async function generateMetadata(): Promise<Metadata> {
@@ -34,8 +35,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (can(r, "quotes.view")) allowed.push("quotes");
   if (can(r, "customers.view")) allowed.push("customers");
   if (can(r, "calendar.view")) allowed.push("calendar");
+  if (can(r, "schedule.edit") || can(r, "dashboard.company")) allowed.push("schedule");
   if (can(r, "messages.use")) allowed.push("messages");
   if (can(r, "counter.use")) allowed.push("counter");
+  if (can(r, "inventory.view")) allowed.push("inventory");
   if (can(r, "money.view")) allowed.push("money");
   if (can(r, "reports.basic")) allowed.push("reports");
   const newOptions = {
@@ -50,6 +53,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     .where(and(eq(notifications.tenantId, user.tenantId), eq(notifications.userId, user.id), isNull(notifications.readAt)));
 
   return (
+    <ShopProvider value={{ jobPrefix: brand.jobPrefix }}>
     <div className="min-h-dvh lg:pl-64 print:!pl-0">
       {/* Desktop sidebar */}
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 print:!hidden flex-col border-r border-slate-200 bg-white lg:flex">
@@ -88,5 +92,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <MobileTabBar allowed={allowed} />
       </div>
     </div>
+    </ShopProvider>
   );
 }

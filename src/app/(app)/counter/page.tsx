@@ -9,6 +9,7 @@ import { pricingRules } from "@/lib/db/schema";
 import { getCategories } from "@/lib/lookups";
 import { getSettings } from "@/lib/settings";
 import { fmtDate, fmtTime, invoiceNo, jobNo, money, quoteNo, today } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 import { PAYMENT_METHOD_LABELS } from "@/lib/money/labels";
 import { STATUS_LABELS } from "@/lib/jobs/workflow";
 import type { PricingConfig } from "@/lib/pricing/engine";
@@ -102,7 +103,7 @@ async function NewSaleTab({ tenantId, canCreateJobs, now }: { tenantId: number; 
 }
 
 async function PayTab({ tenantId, q, canQuotes }: { tenantId: number; q?: string; canQuotes: boolean }) {
-  const { openInvoices, uninvoicedJobs, openQuotes } = await searchPayables(tenantId, q);
+  const [{ openInvoices, uninvoicedJobs, openQuotes }, prefix] = await Promise.all([searchPayables(tenantId, q), getJobPrefix(tenantId)]);
   const nothing = !openInvoices.length && !uninvoicedJobs.length && !openQuotes.length;
   const row = "flex min-h-16 items-center gap-3 px-4 py-3";
   return (
@@ -138,7 +139,7 @@ async function PayTab({ tenantId, q, canQuotes }: { tenantId: number; q?: string
                       {invoiceNo(i.number)} · {i.customerName}
                     </p>
                     <p className="truncate text-sm text-slate-500">
-                      {i.jobNumber ? `${jobNo(i.jobNumber)} · ${i.jobTitle}` : i.source === "counter" ? "Counter sale" : ""} · issued {fmtDate(i.issueDate)}
+                      {i.jobNumber ? `${jobNo(i.jobNumber, prefix)} · ${i.jobTitle}` : i.source === "counter" ? "Counter sale" : ""} · issued {fmtDate(i.issueDate)}
                     </p>
                   </div>
                   <div className="text-right">
@@ -162,7 +163,7 @@ async function PayTab({ tenantId, q, canQuotes }: { tenantId: number; q?: string
                 <Hammer className="size-5 shrink-0 text-slate-400" />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-base font-medium text-slate-900">
-                    {jobNo(j.number)} · {j.title}
+                    {jobNo(j.number, prefix)} · {j.title}
                   </p>
                   <p className="truncate text-sm text-slate-500">
                     {j.customerName} · {STATUS_LABELS[j.status]}
@@ -204,7 +205,7 @@ async function PayTab({ tenantId, q, canQuotes }: { tenantId: number; q?: string
 }
 
 async function TodayTab({ tenantId, now, pays }: { tenantId: number; now: string; pays: Awaited<ReturnType<typeof dayPayments>> }) {
-  const sales = await daySales(tenantId, now);
+  const [sales, prefix] = await Promise.all([daySales(tenantId, now), getJobPrefix(tenantId)]);
   const d = dayTotals(pays.map((p) => ({ method: p.method, amountCents: p.amountCents })));
   const methods = Object.keys(d.totals) as (keyof typeof PAYMENT_METHOD_LABELS)[];
   return (
@@ -235,7 +236,7 @@ async function TodayTab({ tenantId, now, pays }: { tenantId: number; now: string
                     </p>
                     <p className="truncate text-sm text-slate-500">
                       {s.createdByName ?? "—"}
-                      {s.jobNumber ? ` · ${jobNo(s.jobNumber)} on the board` : ""}
+                      {s.jobNumber ? ` · ${jobNo(s.jobNumber, prefix)} on the board` : ""}
                     </p>
                   </div>
                   <div className="text-right">

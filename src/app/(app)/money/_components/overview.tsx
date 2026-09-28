@@ -4,6 +4,7 @@ import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { JobStatusBadge } from "@/components/status";
 import { dueLabel, invoiceNo, jobNo, money, moneyShort, pct, plural, timeAgo } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 import { getOverview } from "@/lib/money/queries";
 import { monthLabel } from "@/lib/money/labels";
 import { marginOf } from "@/lib/pricing/engine";
@@ -11,7 +12,7 @@ import { CreateInvoiceButton } from "./client";
 import { Num, StatCard } from "./parts";
 
 export async function OverviewTab({ tenantId, canEdit, canMargins }: { tenantId: number; canEdit: boolean; canMargins: boolean }) {
-  const o = await getOverview(tenantId);
+  const [o, prefix] = await Promise.all([getOverview(tenantId), getJobPrefix(tenantId)]);
   const month = monthLabel(o.ym);
   const maxBar = Math.max(1, ...o.months.flatMap((m) => [m.revenue, m.expenses]));
   const gpMargin = marginOf(o.sales, o.jobCost + o.laborCost);
@@ -60,7 +61,7 @@ export async function OverviewTab({ tenantId, canEdit, canMargins }: { tenantId:
                     <Row key={j.id}>
                       <div className="min-w-0 flex-1 basis-full sm:basis-0">
                         <Link href={`/jobs/${j.number}`} className="font-medium text-slate-900 hover:underline">
-                          {jobNo(j.number)} · {j.title}
+                          {jobNo(j.number, prefix)} · {j.title}
                         </Link>
                         <p className="flex flex-wrap items-center gap-2 text-sm text-slate-500">
                           {j.customerName} <JobStatusBadge status={j.status} />
@@ -76,14 +77,14 @@ export async function OverviewTab({ tenantId, canEdit, canMargins }: { tenantId:
               {o.overdueList.length > 0 && (
                 <Section icon={AlertTriangle} tone="red" title={`Overdue (${o.overdueCount})`} note={o.overdueCount > o.overdueList.length ? <Link className="text-brand-700 hover:underline" href="/money?tab=receivables">See all in Receivables</Link> : undefined}>
                   {o.overdueList.map((i) => (
-                    <InvoiceLine key={i.id} i={i} late />
+                    <InvoiceLine key={i.id} i={i} prefix={prefix} late />
                   ))}
                 </Section>
               )}
               {o.dueSoonList.length > 0 && (
                 <Section icon={CalendarClock} tone="blue" title={`Due this week (${o.dueSoonList.length})`}>
                   {o.dueSoonList.map((i) => (
-                    <InvoiceLine key={i.id} i={i} />
+                    <InvoiceLine key={i.id} i={i} prefix={prefix} />
                   ))}
                 </Section>
               )}
@@ -150,7 +151,7 @@ function Row({ children }: { children: React.ReactNode }) {
   return <li className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg py-2">{children}</li>;
 }
 
-function InvoiceLine({ i, late }: { i: { id: number; number: number; dueDate: string; balance: number; customerName: string; jobNumber: number | null }; late?: boolean }) {
+function InvoiceLine({ i, prefix, late }: { i: { id: number; number: number; dueDate: string; balance: number; customerName: string; jobNumber: number | null }; prefix: string; late?: boolean }) {
   return (
     <Row>
       <div className="min-w-0 flex-1">
@@ -158,7 +159,7 @@ function InvoiceLine({ i, late }: { i: { id: number; number: number; dueDate: st
           {invoiceNo(i.number)} · {i.customerName}
         </Link>
         <p className="text-sm text-slate-500">
-          {i.jobNumber ? `${jobNo(i.jobNumber)} · ` : ""}
+          {i.jobNumber ? `${jobNo(i.jobNumber, prefix)} · ` : ""}
           <span className={late ? "font-medium text-red-700" : ""}>{late ? dueLabel(i.dueDate) : `Due ${dueLabel(i.dueDate)}`}</span>
         </p>
       </div>

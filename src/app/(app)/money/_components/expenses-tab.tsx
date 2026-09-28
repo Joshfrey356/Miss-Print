@@ -8,19 +8,20 @@ import { AutoSubmitSelect } from "@/components/auto-submit-select";
 import { SearchInput } from "@/components/search-input";
 import { withParams } from "@/components/chips";
 import { fmtDate, jobNo, money } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 import { listExpenses, PAGE_SIZE } from "@/lib/money/queries";
 import { EXPENSE_CATEGORIES, EXPENSE_CATEGORY_LABELS, expensePaymentLabel } from "@/lib/money/labels";
 import { filterInput, FilterLabel, KeepParams, Num, type SP } from "./parts";
 
 export async function ExpensesTab({ tenantId, params, canEdit }: { tenantId: number; params: SP; canEdit: boolean }) {
-  const data = await listExpenses(tenantId, params, { categories: EXPENSE_CATEGORIES });
+  const [data, prefix] = await Promise.all([listExpenses(tenantId, params, { categories: EXPENSE_CATEGORIES }), getJobPrefix(tenantId)]);
   const p = { ...params, tab: "expenses" };
   const filtered = !!(params.category || params.month || params.attributed || params.q);
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end gap-2">
-        <SearchInput placeholder="Vendor, notes, MP-10428…" className="w-full sm:w-72" />
+        <SearchInput placeholder={`Vendor, notes, ${jobNo(10428, prefix)}…`} className="w-full sm:w-72" />
         <form className="flex flex-wrap items-end gap-2">
           <KeepParams params={p} omit={["category", "month", "attributed"]} />
           <AutoSubmitSelect name="category" label="Category" value={params.category} options={EXPENSE_CATEGORIES.map((c) => ({ value: c, label: EXPENSE_CATEGORY_LABELS[c] }))} />
@@ -94,7 +95,7 @@ export async function ExpensesTab({ tenantId, params, canEdit }: { tenantId: num
                     <Td>
                       {r.jobNumber ? (
                         <Link href={`/jobs/${r.jobNumber}`} className="text-brand-700 hover:underline" title={r.jobTitle ?? undefined}>
-                          {jobNo(r.jobNumber)}
+                          {jobNo(r.jobNumber, prefix)}
                         </Link>
                       ) : (
                         <span className="text-sm text-slate-400">Overhead</span>

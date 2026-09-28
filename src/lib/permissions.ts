@@ -26,6 +26,10 @@ export const PERMISSIONS = [
   "money.edit", // create invoices, record payments
   "money.void", // void invoices/payments
   "counter.use", // front counter: ring up walk-in sales and take payments
+  "inventory.view", // stock levels, reservations, movements
+  "inventory.edit", // receive deliveries, record usage, adjust and count stock
+  "purchasing.edit", // create, send and receive purchase orders (shows costs)
+  "schedule.edit", // book jobs on machines in the equipment schedule
   "expenses.edit",
   "reports.basic",
   "reports.financial",
@@ -59,6 +63,10 @@ const ROLE_PERMISSIONS: Record<Role, Set<Permission>> = {
     "expenses.edit",
     "reports.basic",
     "counter.use",
+    "inventory.view",
+    "inventory.edit",
+    "purchasing.edit",
+    "schedule.edit",
   ]),
   sales: new Set<Permission>([
     "financials.view",
@@ -88,7 +96,7 @@ const ROLE_PERMISSIONS: Record<Role, Set<Permission>> = {
     "tasks.use",
     "calendar.view",
   ]),
-  production: new Set<Permission>(["jobs.view", "jobs.status", "files.upload", "messages.use", "tasks.use", "calendar.view"]),
+  production: new Set<Permission>(["jobs.view", "jobs.status", "files.upload", "messages.use", "tasks.use", "calendar.view", "inventory.view", "inventory.edit", "schedule.edit"]),
   installer: new Set<Permission>(["jobs.view", "jobs.status", "files.upload", "messages.use", "tasks.use", "calendar.view"]),
   accounting: new Set<Permission>([
     "dashboard.company",
@@ -107,6 +115,8 @@ const ROLE_PERMISSIONS: Record<Role, Set<Permission>> = {
     "reports.basic",
     "reports.financial",
     "counter.use",
+    "inventory.view",
+    "purchasing.edit",
   ]),
 };
 

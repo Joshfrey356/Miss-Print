@@ -23,4 +23,4 @@ export function HistoryPanel({ activity }: { activity: A[] }) {
   );
 }
 
-const lower = (s: string) => (/^[A-Z][a-z]/.test(s) && !/^(Proof|Invoice|Payment|Price|MP-|Q-|INV-)/.test(s) ? s[0]!.toLowerCase() + s.slice(1) : s);
+const lower = (s: string) => (/^[A-Z][a-z]/.test(s) && !/^(Proof|Invoice|Payment|Price|[A-Z]{1,5}-\d)/.test(s) ? s[0]!.toLowerCase() + s.slice(1) : s);

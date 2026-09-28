@@ -2,7 +2,8 @@ import "server-only";
 import { and, asc, desc, eq, ilike, inArray, isNull, ne, notExists, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { customers, invoiceItems, invoices, jobs, locations, paymentLinks, payments, quotes, registerCloses, users } from "@/lib/db/schema";
-import { parseJobNumber } from "@/lib/format";
+import { parseNumberInput } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 
 /** An invoice with everything the payment screen and the receipt need. */
 export async function getCounterSale(tenantId: number, invoiceId: number) {
@@ -94,9 +95,13 @@ const likeOf = (q: string) => `%${q.replace(/[\\%_]/g, (m) => "\\" + m)}%`;
 export async function searchPayables(tenantId: number, qRaw: string | undefined) {
   const q = (qRaw ?? "").trim().slice(0, 80);
   const like = likeOf(q);
-  const digits = q.replace(/^(inv|mp|q)[-\s]?/i, "");
-  const num = /^\d{1,9}$/.test(digits) ? Number(digits) : null;
-  const jobNum = q ? parseJobNumber(q) ?? num : null;
+  // "INV-7001" → invoices, "Q-5012" → quotes, "MP-10428" (this shop's job prefix) → jobs; a bare number → all three.
+  const typed = q ? parseNumberInput(q) : null;
+  const jobPrefix = typed?.letters ? await getJobPrefix(tenantId) : "";
+  const numAs = (letters: string) => (typed && (!typed.letters || typed.letters === letters) ? typed.n : null);
+  const invoiceNum = numAs("INV");
+  const quoteNum = numAs("Q");
+  const jobNum = numAs(jobPrefix);
 
   const [openInvoices, uninvoicedJobs, openQuotes] = await Promise.all([
     db
@@ -121,7 +126,7 @@ export async function searchPayables(tenantId: number, qRaw: string | undefined)
           eq(invoices.tenantId, tenantId),
           inArray(invoices.status, ["draft", "sent", "partial"]),
           sql`${invoices.totalCents} > ${invoices.paidCents}`,
-          q ? or(ilike(customers.name, like), ilike(jobs.title, like), num != null ? eq(invoices.number, num) : undefined, jobNum != null ? eq(jobs.number, jobNum) : undefined) : undefined,
+          q ? or(ilike(customers.name, like), ilike(jobs.title, like), invoiceNum != null ? eq(invoices.number, invoiceNum) : undefined, jobNum != null ? eq(jobs.number, jobNum) : undefined) : undefined,
         ),
       )
       .orderBy(desc(invoices.issueDate), desc(invoices.id))
@@ -157,7 +162,7 @@ export async function searchPayables(tenantId: number, qRaw: string | undefined)
           isNull(quotes.archivedAt),
           inArray(quotes.status, ["sent", "accepted"]),
           sql`${quotes.totalCents} > 0`,
-          q ? or(ilike(customers.name, like), ilike(quotes.title, like), num != null ? eq(quotes.number, num) : undefined) : undefined,
+          q ? or(ilike(customers.name, like), ilike(quotes.title, like), quoteNum != null ? eq(quotes.number, quoteNum) : undefined) : undefined,
         ),
       )
       .orderBy(desc(quotes.updatedAt))

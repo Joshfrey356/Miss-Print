@@ -5,6 +5,7 @@ import { Ban, CheckCircle2, Plus, ReceiptText } from "lucide-react";
 import { getCurrentUser, requirePagePermission } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { invoiceNo, jobNo, money } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 import { PAYMENT_METHOD_LABELS } from "@/lib/money/labels";
 import { changeDue } from "@/lib/counter/math";
 import { getCounterSale } from "@/lib/counter/queries";
@@ -32,7 +33,7 @@ export default async function CounterSalePage({ params }: Props) {
   const sale = await getCounterSale(user.tenantId, Number(id));
   if (!sale) notFound();
   const { inv, customer } = sale;
-  const connected = await stripeConnected(user.tenantId);
+  const [connected, prefix] = await Promise.all([stripeConnected(user.tenantId), getJobPrefix(user.tenantId)]);
   const isVoid = inv.status === "void";
   const balance = isVoid ? 0 : Math.max(0, inv.totalCents - inv.paidCents);
   const active = sale.payments.filter((x) => !x.p.voidedAt);
@@ -55,7 +56,7 @@ export default async function CounterSalePage({ params }: Props) {
             <span className="font-medium text-slate-700">{customer.name}</span>
             {sale.job && (
               <Link href={`/jobs/${sale.job.number}`} className="hover:underline">
-                {jobNo(sale.job.number)} · {sale.job.title}
+                {jobNo(sale.job.number, prefix)} · {sale.job.title}
               </Link>
             )}
             {inv.source === "counter" && <span>Counter sale</span>}

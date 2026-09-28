@@ -3,6 +3,7 @@ import { boardJobs } from "@/lib/jobs/queries";
 import { today } from "@/lib/format";
 import { getLocations } from "@/lib/lookups";
 import { getBrand } from "@/lib/brand";
+import { ShopProvider } from "@/components/shop-context";
 import { TvBoard } from "./tv-board";
 
 export const metadata = { title: "Production TV" };
@@ -36,7 +37,9 @@ export default async function TvPage({ searchParams }: { searchParams: Promise<{
     hasArtwork: j.hasArtwork,
   });
   const jobs = all.map(strip);
+  // TV mode is outside the signed-in layout, so it provides the shop's job prefix itself.
   return (
+    <ShopProvider value={{ jobPrefix: brand.jobPrefix }}>
     <TvBoard
       brand={brand}
       location={location ? (locations.find((l) => l.code === location)?.name ?? location) : null}
@@ -47,5 +50,6 @@ export default async function TvPage({ searchParams }: { searchParams: Promise<{
       installs={jobs.filter((j) => j.status === "scheduled_install")}
       ready={jobs.filter((j) => j.status === "ready_pickup" || j.status === "scheduled_delivery")}
     />
+    </ShopProvider>
   );
 }

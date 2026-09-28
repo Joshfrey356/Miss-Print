@@ -15,7 +15,8 @@ import { aliasedTable } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { calendarEvents, customers, jobs, locations } from "@/lib/db/schema";
 import type { SessionUser } from "@/lib/auth";
-import { fmtTime, jobNo, today } from "@/lib/format";
+import { fmtTime, jobNo as fmtJobNo, today } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 import { ACTIVE_STATUSES, OPEN_STATUSES, STATUS_SHORT } from "@/lib/jobs/workflow";
 import { shopHM, type CalItem, type CalType } from "./types";
 
@@ -58,7 +59,7 @@ export async function getCalendarItems({ from, to, user }: { from: string; to: s
     installerId: jobs.installerId,
   };
 
-  const [dueJobs, apptJobs, events, [offsite]] = await Promise.all([
+  const [dueJobs, apptJobs, events, [offsite], prefix] = await Promise.all([
     db
       .select(jobCols)
       .from(jobs)
@@ -101,7 +102,9 @@ export async function getCalendarItems({ from, to, user }: { from: string; to: s
       .leftJoin(eventJobs, eq(eventJobs.id, calendarEvents.jobId))
       .where(and(eq(calendarEvents.tenantId, tenantId), isNull(calendarEvents.archivedAt), inRange(calendarEvents.startsAt))),
     db.select({ code: locations.code, name: locations.name }).from(locations).where(and(eq(locations.tenantId, tenantId), eq(locations.code, "OFFSITE"))),
+    getJobPrefix(tenantId),
   ]);
+  const jobNo = (n: number) => fmtJobNo(n, prefix);
 
   const now = today();
   const onJob = (j: (typeof dueJobs)[number]) =>

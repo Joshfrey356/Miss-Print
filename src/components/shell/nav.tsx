@@ -12,6 +12,8 @@ import {
   Users,
   MoreHorizontal,
   Store,
+  CalendarClock,
+  Package,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -21,8 +23,10 @@ export const NAV = [
   { key: "quotes", label: "Quotes", href: "/quotes", icon: FileText },
   { key: "customers", label: "Customers", href: "/customers", icon: Users },
   { key: "calendar", label: "Calendar", href: "/calendar", icon: CalendarDays },
+  { key: "schedule", label: "Schedule", href: "/schedule", icon: CalendarClock },
   { key: "messages", label: "Messages", href: "/messages", icon: MessageSquare },
   { key: "counter", label: "Counter", href: "/counter", icon: Store },
+  { key: "inventory", label: "Inventory", href: "/inventory", icon: Package },
   { key: "money", label: "Money", href: "/money", icon: DollarSign },
   { key: "reports", label: "Reports", href: "/reports", icon: BarChart3 },
 ] as const;

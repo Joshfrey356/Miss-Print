@@ -6,6 +6,7 @@ import { getSettings } from "@/lib/settings";
 import { STATUS_LABELS } from "@/lib/jobs/workflow";
 import { marginOf } from "@/lib/pricing/engine";
 import { jobNo } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 import * as q from "./queries";
 import { monthLabel, monthsBetween, type DateRange } from "./range";
 
@@ -29,13 +30,15 @@ export type Row = Record<string, string | number | null>;
 export type ReportTable = { columns: Column[]; rows: Row[]; note?: string };
 export type Access = "basic" | "financial" | "margins";
 export type TabKey = "revenue" | "profit" | "operations" | "sales" | "customers";
-export type ReportCtx = { tenantId: number; financial: boolean; margins: boolean; laborRateCents: number; targetMarginPct: number };
+/** `jobPrefix` is the shop's job number prefix (tenants.jobPrefix). */
+export type ReportCtx = { tenantId: number; jobPrefix: string; financial: boolean; margins: boolean; laborRateCents: number; targetMarginPct: number };
 
 /** What this person may see in Reports. Money needs reports.financial or margins.view; costs need margins.view. */
 export async function getReportCtx(tenantId: number, role: Role): Promise<ReportCtx> {
-  const { rules } = await getSettings(tenantId);
+  const [{ rules }, jobPrefix] = await Promise.all([getSettings(tenantId), getJobPrefix(tenantId)]);
   return {
     tenantId,
+    jobPrefix,
     financial: can(role, "reports.financial") || can(role, "margins.view"),
     margins: can(role, "margins.view"),
     laborRateCents: rules.laborCostPerHourCents,
@@ -215,7 +218,7 @@ export const REPORTS = {
           { key: "margin", label: "Margin", kind: "pct" },
         ],
         rows: list.map((j) => ({
-          job: jobNo(j.number),
+          job: jobNo(j.number, ctx.jobPrefix),
           href: `/jobs/${j.number}`,
           title: j.title,
           customer: j.customer,
@@ -285,7 +288,7 @@ export const REPORTS = {
           { key: "status", label: "Where it is", kind: "text", wide: true },
         ],
         rows: list.map((j) => ({
-          job: jobNo(j.number),
+          job: jobNo(j.number, ctx.jobPrefix),
           href: `/jobs/${j.number}`,
           title: j.title,
           customer: j.customer,
@@ -314,7 +317,7 @@ export const REPORTS = {
           { key: "days", label: "Days waiting", kind: "int" },
         ],
         rows: list.map((p) => ({
-          job: jobNo(p.jobNumber),
+          job: jobNo(p.jobNumber, ctx.jobPrefix),
           href: `/jobs/${p.jobNumber}`,
           title: p.title,
           customer: p.customer,

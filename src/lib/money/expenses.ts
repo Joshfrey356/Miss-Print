@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { expenses, jobs, vendors, type ExpenseCategory } from "@/lib/db/schema";
 import { diff, logActivity } from "@/lib/activity";
 import { jobNo, money, parseJobNumber } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 import { UserError } from "@/lib/actions";
 import { EXPENSE_CATEGORY_LABELS } from "./labels";
 
@@ -33,13 +34,14 @@ async function vendorFor(tenantId: number, name: string) {
   return v ?? null;
 }
 
-/** "MP-10428" / "10428" → job in this shop, or throws a friendly error. Blank → null. */
+/** "MP-10428" / "10428" (with this shop's prefix) → job in this shop, or throws a friendly error. Blank → null. */
 export async function jobFromNumberInput(tenantId: number, input: string | null) {
   if (!input?.trim()) return null;
-  const n = parseJobNumber(input);
-  if (n == null) throw new UserError(`"${input}" isn't a job number. Use a number like MP-10428.`);
+  const prefix = await getJobPrefix(tenantId);
+  const n = parseJobNumber(input, prefix);
+  if (n == null) throw new UserError(`"${input}" isn't a job number. Use a number like ${jobNo(10428, prefix)}.`);
   const [job] = await db.select({ id: jobs.id, number: jobs.number, title: jobs.title, customerId: jobs.customerId }).from(jobs).where(and(eq(jobs.tenantId, tenantId), eq(jobs.number, n)));
-  if (!job) throw new UserError(`Job ${jobNo(n)} wasn't found.`);
+  if (!job) throw new UserError(`Job ${jobNo(n, prefix)} wasn't found.`);
   return job;
 }
 
@@ -52,6 +54,7 @@ export async function createExpense(tenantId: number, input: ExpenseInput, actor
       .values({ ...input, tenantId, vendorName, vendorId: vendor?.id ?? null, receiptFileId: input.receiptFileId ?? null, createdBy: actor.id })
       .returning();
     const [job] = input.jobId ? await tx.select({ number: jobs.number, customerId: jobs.customerId }).from(jobs).where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, input.jobId))) : [];
+    const jobPrefix = job ? await getJobPrefix(tenantId) : "";
     await logActivity(
       {
         tenantId,
@@ -61,7 +64,7 @@ export async function createExpense(tenantId: number, input: ExpenseInput, actor
         jobId: input.jobId,
         customerId: job?.customerId ?? null,
         actorId: actor.id,
-        summary: `Added expense: ${money(input.amountCents)} ${EXPENSE_CATEGORY_LABELS[input.category].toLowerCase()} from ${vendorName}${job ? ` for ${jobNo(job.number)}` : ""}`,
+        summary: `Added expense: ${money(input.amountCents)} ${EXPENSE_CATEGORY_LABELS[input.category].toLowerCase()} from ${vendorName}${job ? ` for ${jobNo(job.number, jobPrefix)}` : ""}`,
       },
       tx,
     );

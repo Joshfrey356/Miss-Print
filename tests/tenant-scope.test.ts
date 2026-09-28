@@ -14,9 +14,9 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 
-// Tables WITHOUT tenant_id: tenants itself, sessions/account_tokens/login_attempts (keyed by
+// Tables WITHOUT tenant_id (or looked up by secret token): tenants, sessions/account_tokens/portal_sessions/login_attempts (keyed by
 // user/secret token/email/ip) and mentions (scoped through its message). Everything else is shop-owned.
-const GLOBAL_TABLES = new Set(["tenants", "sessions", "accountTokens", "loginAttempts", "mentions"]);
+const GLOBAL_TABLES = new Set(["tenants", "sessions", "accountTokens", "portalSessions", "loginAttempts", "mentions"]);
 
 function tenantTables(): Set<string> {
   const src = readFileSync(path.join(__dirname, "../src/lib/db/schema.ts"), "utf8");

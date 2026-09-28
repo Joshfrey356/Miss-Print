@@ -8,6 +8,7 @@ import { InvoiceStatusBadge } from "@/components/status";
 import { Chips, withParams } from "@/components/chips";
 import { SearchInput } from "@/components/search-input";
 import { fmtDate, invoiceNo, jobNo, money, today } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 import { invoiceFilterCounts, listInvoices, PAGE_SIZE } from "@/lib/money/queries";
 import { isInvoiceOverdue } from "@/lib/money/service";
 import { filterInput, FilterLabel, KeepParams, Num, type SP } from "./parts";
@@ -21,7 +22,7 @@ const EMPTY: Record<string, string> = {
 };
 
 export async function InvoicesTab({ tenantId, params }: { tenantId: number; params: SP }) {
-  const [data, counts] = await Promise.all([listInvoices(tenantId, params), invoiceFilterCounts(tenantId)]);
+  const [data, counts, prefix] = await Promise.all([listInvoices(tenantId, params), invoiceFilterCounts(tenantId), getJobPrefix(tenantId)]);
   const now = today();
   const p = { ...params, tab: "invoices" };
   const chip = (key: string, label: string, count?: number, tone?: "red") => ({ key, label, count, tone, href: withParams("/money", p, { status: key === "all" ? undefined : key, page: undefined }) });
@@ -34,7 +35,7 @@ export async function InvoicesTab({ tenantId, params }: { tenantId: number; para
           items={[chip("all", "All"), chip("unpaid", "Unpaid", counts.unpaid), chip("overdue", "Overdue", counts.overdue, "red"), chip("paid", "Paid"), chip("void", "Void")]}
         />
         <div className="flex flex-wrap items-end gap-2">
-          <SearchInput placeholder="Customer, INV-7001, MP-10428, PO…" className="w-full sm:w-80" />
+          <SearchInput placeholder={`Customer, INV-7001, ${jobNo(10428, prefix)}, PO…`} className="w-full sm:w-80" />
           <form className="flex items-end gap-2">
             <KeepParams params={p} omit={["from", "to"]} />
             <FilterLabel label="Issued from">
@@ -94,7 +95,7 @@ export async function InvoicesTab({ tenantId, params }: { tenantId: number; para
                       <Td>
                         {r.jobNumber ? (
                           <Link href={`/jobs/${r.jobNumber}`} className="text-slate-600 hover:underline" title={r.jobTitle ?? undefined}>
-                            {jobNo(r.jobNumber)}
+                            {jobNo(r.jobNumber, prefix)}
                           </Link>
                         ) : (
                           <span className="text-slate-400">—</span>

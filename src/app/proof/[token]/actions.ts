@@ -10,6 +10,7 @@ import { logActivity } from "@/lib/activity";
 import { notify } from "@/lib/notifications";
 import { changeJobStatus } from "@/lib/jobs/service";
 import { jobNo } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 import { getSettings } from "@/lib/settings";
 import { approvalStatement, shopName } from "./statement";
 
@@ -97,12 +98,13 @@ export async function respondToProof(token: string, _prev: ProofResponseState, f
         await changeJobStatus(tx, job, "approved_for_production", null, { reason: `customer approved Proof V${row.proof.version}` });
       if (!approved && ["proof_ready", "waiting_approval"].includes(job.status)) await changeJobStatus(tx, job, "design", null, { reason: "customer requested changes" });
     }
+    const prefix = await getJobPrefix(tenantId);
     await notify(
       {
         tenantId,
         userIds: [row.job.designerId, row.job.salespersonId],
         kind: "proof",
-        title: approved ? `Customer approved Proof V${row.proof.version} — ${jobNo(row.job.number)}` : `Changes requested on ${jobNo(row.job.number)}`,
+        title: approved ? `Customer approved Proof V${row.proof.version} — ${jobNo(row.job.number, prefix)}` : `Changes requested on ${jobNo(row.job.number, prefix)}`,
         body: approved ? `${who} approved “${row.job.title}”.` : `${who}: ${comment.slice(0, 200)}`,
         link: `/jobs/${row.job.number}?tab=files`,
       },

@@ -9,7 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Checkbox, Field, Input, MoneyInput, Select, Textarea } from "@/components/ui/input";
 import { CustomerPicker, type PickedCustomer } from "@/components/customer-picker";
 import { priceQuoteItem, saveQuote, similarJobs, type LinePriceResult, type QuotePayload } from "@/app/(app)/quotes/actions";
-import { centsToInput, fmtDate, fmtSize, jobNo, money, parseMoney, pct } from "@/lib/format";
+import { centsToInput, fmtDate, fmtSize, money, parseMoney, pct } from "@/lib/format";
+import { useJobNo } from "@/components/shop-context";
 import type { FinishingOption } from "@/lib/pricing/engine";
 import {
   COLOR_PRESETS,
@@ -279,6 +280,7 @@ export function QuoteBuilder({
   currentUserId: number;
 }) {
   const router = useRouter();
+  const jobNo = useJobNo();
   const [customer, setCustomer] = useState<PickedCustomer | null>(initial.customer);
   const [contactId, setContactId] = useState<number | null>(initial.contactId);
   const [title, setTitle] = useState(initial.title);

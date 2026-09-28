@@ -1,6 +1,7 @@
 import { AlertTriangle, Flame, Zap } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
-import { dueLabel, jobNo } from "@/lib/format";
+import { dueLabel } from "@/lib/format";
+import { useJobNo } from "@/components/shop-context";
 import { STATUS_SHORT } from "@/lib/jobs/workflow";
 import { cn } from "@/lib/utils";
 import { locationTone } from "./job-meta";
@@ -27,6 +28,7 @@ export type BoardCard = {
 
 export function JobCardView({ job, dragging, tv }: { job: BoardCard; dragging?: boolean; tv?: boolean }) {
   const due = dueLabel(job.dueDate);
+  const jobNo = useJobNo(); // client-only: rendered by the production board and TV mode
   return (
     <div
       className={cn(

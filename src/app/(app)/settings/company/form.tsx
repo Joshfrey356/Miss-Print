@@ -54,7 +54,7 @@ export function LogoForm({ brand }: { brand: LogoBrand }) {
   );
 }
 
-export function CompanyForm({ company }: { company: CompanyProfile }) {
+export function CompanyForm({ company, jobPrefix }: { company: CompanyProfile; jobPrefix: string }) {
   return (
     <ActionForm action={saveCompanyProfile}>
       <Card>
@@ -70,6 +70,9 @@ export function CompanyForm({ company }: { company: CompanyProfile }) {
           </Field>
           <Field label="Email customers write to" htmlFor="email">
             <Input id="email" name="email" type="email" defaultValue={company.email} />
+          </Field>
+          <Field label="Job number prefix" htmlFor="jobPrefix" required hint={`Shown before job numbers, e.g. ${jobPrefix}-10428. 1–5 letters. Changing it only changes the letters shown — job numbers stay the same.`}>
+            <Input id="jobPrefix" name="jobPrefix" defaultValue={jobPrefix} required maxLength={5} pattern="[A-Za-z]{1,5}" title="1–5 letters" autoComplete="off" className="uppercase" />
           </Field>
           <Field label="Website" htmlFor="website" className="sm:col-span-2">
             <Input id="website" name="website" defaultValue={company.website} />

@@ -3,6 +3,7 @@ import { requirePagePermission } from "@/lib/auth";
 import { getJobDetail } from "@/lib/jobs/queries";
 import { getUsers } from "@/lib/lookups";
 import { fmtDate, fmtDateTime, fmtSize, jobNo, parseJobNumber } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 import { FULFILLMENT_LABELS, PRIORITY_LABELS, STATUS_LABELS } from "@/lib/jobs/workflow";
 import { PrintButton } from "@/components/print-button";
 import { runInfoOf, runSteps } from "@/lib/quotes/print-options";
@@ -16,7 +17,7 @@ export default async function TicketPage({ params }: { params: Promise<{ number:
   if (!number) notFound();
   const d = await getJobDetail(number, { ...user, role: "production" });
   if (!d) notFound();
-  const people = await getUsers(user.tenantId);
+  const [people, prefix] = await Promise.all([getUsers(user.tenantId), getJobPrefix(user.tenantId)]);
   const name = (id: number | null) => people.find((p) => p.id === id)?.name ?? "—";
   const { job } = d;
   const approved = d.proofs.find((p) => p.proof.status === "approved");
@@ -27,7 +28,7 @@ export default async function TicketPage({ params }: { params: Promise<{ number:
       </div>
       <div className="flex items-start justify-between border-b-2 border-slate-900 pb-3">
         <div>
-          <p className="text-4xl font-black">{jobNo(job.number)}</p>
+          <p className="text-4xl font-black">{jobNo(job.number, prefix)}</p>
           <p className="mt-1 text-xl font-semibold">{job.title}</p>
           <p className="text-lg">{d.customer.name}</p>
         </div>

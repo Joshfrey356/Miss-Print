@@ -11,6 +11,7 @@ import {
 import { FOLDER_LABELS } from "@/lib/files";
 import { balanceOf, isInvoiceOverdue } from "@/lib/money/service";
 import { dueLabel, fmtDate, fmtDateTime, invoiceNo, jobNo, money, quoteNo, timeAgo, today, ymdOf } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 import type { FileFolder, JobStatus, Priority, QuoteStatus } from "@/lib/db/schema";
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui/avatar";
@@ -55,12 +56,14 @@ function DueText({ due, status }: { due: string | null; status: JobStatus }) {
 export function JobList({
   title,
   jobs,
+  jobPrefix,
   showMoney,
   empty,
   action,
 }: {
   title: string;
   jobs: JobRow[];
+  jobPrefix: string;
   showMoney: boolean;
   empty: string;
   action?: React.ReactNode;
@@ -77,7 +80,7 @@ export function JobList({
               <Link href={`/jobs/${j.number}`} className="flex flex-col gap-1.5 px-5 py-3 hover:bg-slate-50 sm:flex-row sm:items-center sm:gap-4">
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[15px] font-medium text-slate-900">
-                    <span className="text-slate-500">{jobNo(j.number)}</span> · {j.title}
+                    <span className="text-slate-500">{jobNo(j.number, jobPrefix)}</span> · {j.title}
                   </p>
                   <div className="mt-1 flex flex-wrap items-center gap-1.5">
                     <JobStatusBadge status={j.status} short />
@@ -132,12 +135,14 @@ export function QuoteList({ quotes, showMoney, action }: { quotes: QuoteRow[]; s
 export function PastOrders({
   customerId,
   jobs,
+  jobPrefix,
   total,
   showMoney,
   canReorder,
 }: {
   customerId: number;
   jobs: JobRow[];
+  jobPrefix: string;
   total: number;
   showMoney: boolean;
   canReorder: boolean;
@@ -162,7 +167,7 @@ export function PastOrders({
             <li key={j.id} className="flex items-center gap-3 px-5 py-3">
               <Link href={`/jobs/${j.number}`} className="min-w-0 flex-1 hover:text-brand-700">
                 <p className="truncate text-[15px] font-medium text-slate-900">
-                  <span className="text-slate-500">{jobNo(j.number)}</span> · {j.title}
+                  <span className="text-slate-500">{jobNo(j.number, jobPrefix)}</span> · {j.title}
                 </p>
                 <p className="text-sm text-slate-500">
                   Completed {fmtDate(ymdOf(j.completedAt ?? j.createdAt), { year: true, weekday: false })}
@@ -189,7 +194,9 @@ function ReorderLink({ number }: { number: number }) {
 
 export function ActivityCard({
   activity,
+  jobPrefix,
 }: {
+  jobPrefix: string;
   activity: { id: number; summary: string; createdAt: Date; actor: string | null; actorColor: string | null; jobNumber: number | null; jobTitle: string | null }[];
 }) {
   return (
@@ -209,7 +216,7 @@ export function ActivityCard({
                     <>
                       {" · "}
                       <Link href={`/jobs/${a.jobNumber}`} className="text-brand-700 hover:underline">
-                        {jobNo(a.jobNumber)} {a.jobTitle}
+                        {jobNo(a.jobNumber, jobPrefix)} {a.jobTitle}
                       </Link>
                     </>
                   )}
@@ -247,7 +254,7 @@ export async function JobsTable({
   sort?: CustomerJobSort;
   dir: "asc" | "desc";
 }) {
-  const jobs = await getCustomerJobs(tenantId, customerId, { showMoney, sort: sort ?? "created", dir: sort ? dir : "desc" });
+  const [jobs, jobPrefix] = await Promise.all([getCustomerJobs(tenantId, customerId, { showMoney, sort: sort ?? "created", dir: sort ? dir : "desc" }), getJobPrefix(tenantId)]);
   const params = { tab: "jobs" };
   const s = sort ?? "created";
   const d = sort ? dir : "desc";
@@ -286,7 +293,7 @@ export async function JobsTable({
               <Tr key={j.id} className="hover:bg-slate-50">
                 <Td className="whitespace-nowrap">
                   <Link href={`/jobs/${j.number}`} className="font-medium text-brand-700 hover:underline">
-                    {jobNo(j.number)}
+                    {jobNo(j.number, jobPrefix)}
                   </Link>
                 </Td>
                 <Td className="min-w-48">
@@ -371,7 +378,7 @@ export async function QuotesTable({ tenantId, customerId, showMoney, canCreate }
 }
 
 export async function InvoicesTab({ tenantId, customerId }: { tenantId: number; customerId: number }) {
-  const invoices = await getCustomerInvoices(tenantId, customerId);
+  const [invoices, jobPrefix] = await Promise.all([getCustomerInvoices(tenantId, customerId), getJobPrefix(tenantId)]);
   const now = today();
   return (
     <Card>
@@ -404,7 +411,7 @@ export async function InvoicesTab({ tenantId, customerId }: { tenantId: number; 
                   <Td className="whitespace-nowrap">
                     {inv.jobNumber ? (
                       <Link href={`/jobs/${inv.jobNumber}`} className="text-slate-700 hover:text-brand-700">
-                        {jobNo(inv.jobNumber)}
+                        {jobNo(inv.jobNumber, jobPrefix)}
                       </Link>
                     ) : (
                       <span className="text-slate-400">—</span>
@@ -432,7 +439,7 @@ export async function InvoicesTab({ tenantId, customerId }: { tenantId: number; 
 const fmtSize = (b: number) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : b >= 1024 ? `${Math.round(b / 1024)} KB` : `${b} B`);
 
 export async function FilesTab({ tenantId, customerId, canUpload }: { tenantId: number; customerId: number; canUpload: boolean }) {
-  const files = await getCustomerFiles(tenantId, customerId);
+  const [files, jobPrefix] = await Promise.all([getCustomerFiles(tenantId, customerId), getJobPrefix(tenantId)]);
   const groups = new Map<FileFolder, typeof files>();
   for (const f of files) groups.set(f.folder, [...(groups.get(f.folder) ?? []), f]);
   const order = Object.keys(FOLDER_LABELS) as FileFolder[];
@@ -460,7 +467,7 @@ export async function FilesTab({ tenantId, customerId, canUpload }: { tenantId: 
                     <span className="flex flex-wrap gap-x-3 text-sm text-slate-500">
                       {f.jobNumber && (
                         <Link href={`/jobs/${f.jobNumber}`} className="hover:text-brand-700">
-                          {jobNo(f.jobNumber)}
+                          {jobNo(f.jobNumber, jobPrefix)}
                         </Link>
                       )}
                       <span>{fmtSize(f.sizeBytes)}</span>
@@ -487,7 +494,7 @@ const CHANNEL: Record<string, { label: (dir: string) => string; icon: typeof Mai
 };
 
 export async function MessagesTab({ tenantId, customerId, canLog, showMoney, showPrices }: { tenantId: number; customerId: number; canLog: boolean; showMoney: boolean; showPrices: boolean }) {
-  const items = await getCustomerCommunications(tenantId, customerId, { showMoney, showPrices });
+  const [items, jobPrefix] = await Promise.all([getCustomerCommunications(tenantId, customerId, { showMoney, showPrices }), getJobPrefix(tenantId)]);
   return (
     <div className="grid gap-5 lg:grid-cols-3">
       {canLog && (
@@ -526,7 +533,7 @@ export async function MessagesTab({ tenantId, customerId, canLog, showMoney, sho
                         <>
                           {" · "}
                           <Link href={`/jobs/${m.jobNumber}`} className="hover:text-brand-700">
-                            {jobNo(m.jobNumber)}
+                            {jobNo(m.jobNumber, jobPrefix)}
                           </Link>
                         </>
                       )}

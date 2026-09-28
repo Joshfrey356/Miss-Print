@@ -10,13 +10,14 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Table, THead, Th, Tr, Td } from "@/components/ui/table";
 import { AutoSubmitSelect } from "@/components/auto-submit-select";
 import { fmtDate, fmtSize, jobNo, money } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 
 export const metadata = { title: "Price Lookup" };
 
 export default async function LookupPage({ searchParams }: { searchParams: Promise<{ q?: string; category?: string }> }) {
   const user = await requirePagePermission("quotes.view");
   const { q = "", category } = await searchParams;
-  const cats = await getCategories(user.tenantId);
+  const [cats, prefix] = await Promise.all([getCategories(user.tenantId), getJobPrefix(user.tenantId)]);
   const parsed = parseLookup(q);
   // Match a category by name if the text mentions one ("banner", "business cards", "wrap")
   const words = parsed.text.toLowerCase();
@@ -78,7 +79,7 @@ export default async function LookupPage({ searchParams }: { searchParams: Promi
                     <Tr key={`${j.jobId}-${j.description}`} className={j.close ? "" : "text-slate-500"}>
                       <Td className="whitespace-nowrap">
                         <Link href={`/jobs/${j.number}`} className="font-medium text-brand-700 hover:underline">
-                          {jobNo(j.number)}
+                          {jobNo(j.number, prefix)}
                         </Link>
                       </Td>
                       <Td className="min-w-64">

@@ -23,7 +23,8 @@ import { JobStatusBadge, PriorityBadge } from "@/components/status";
 import { DueText } from "@/components/jobs/job-meta";
 import { TaskList } from "@/components/tasks/task-list";
 import { BarList, ColumnChart } from "@/components/charts";
-import { fmtTime, jobNo, money, moneyShort, pct, plural, timeAgo, today } from "@/lib/format";
+import { fmtTime, jobNo as fmtJobNo, money, moneyShort, pct, plural, timeAgo, today } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 import { cn } from "@/lib/utils";
 
 export const metadata = { title: "Dashboard" };
@@ -35,6 +36,8 @@ function greeting() {
 
 export default async function DashboardPage() {
   const user = await requireUser();
+  const jobPrefix = await getJobPrefix(user.tenantId);
+  const jobNo = (n: number) => fmtJobNo(n, jobPrefix);
   const r = user.role;
   const company = can(r, "dashboard.company");
   const money$ = can(r, "financials.view") && company;

@@ -17,7 +17,7 @@ import { jobNo, money, parseMoney } from "@/lib/format";
 import { createInvoiceFromJob } from "@/lib/money/service";
 import { emailProvider } from "@/lib/email";
 import { getSettings } from "@/lib/settings";
-import { nextNumber } from "@/lib/tenant";
+import { getJobPrefix, nextNumber } from "@/lib/tenant";
 import { hashProofToken } from "@/lib/proofs";
 import { appUrl } from "@/lib/http";
 import { priceLine, storedBreakdown } from "@/lib/quotes/pricing";
@@ -182,7 +182,7 @@ export async function createJob(_prev: unknown, fd: FormData) {
       await tx.insert(jobStatusHistory).values({ tenantId, jobId: job!.id, fromStatus: null, toStatus: status, changedBy: user.id, note: "Job created" });
       await logActivity({ tenantId, action: "job.created", entityType: "job", entityId: job!.id, jobId: job!.id, customerId, actorId: user.id, summary: "Created job" }, tx);
       await notify(
-        { tenantId, userIds: [job!.designerId, job!.productionId, job!.installerId], kind: "assigned", title: `You're on ${jobNo(job!.number)} ${title}`, link: `/jobs/${job!.number}`, actorId: user.id },
+        { tenantId, userIds: [job!.designerId, job!.productionId, job!.installerId], kind: "assigned", title: `You're on ${jobNo(job!.number, await getJobPrefix(tenantId))} ${title}`, link: `/jobs/${job!.number}`, actorId: user.id },
         tx,
       );
       return job!.number;
@@ -265,7 +265,7 @@ export async function updateJob(jobId: number, fd: FormData) {
         tx,
       );
       if ("fulfillmentAt" in changes.after && job.installerId && data.fulfillment === "install")
-        await notify({ tenantId: user.tenantId, userIds: [job.installerId], kind: "assigned", title: `Installation changed for ${jobNo(job.number)}`, body: job.title, link: `/jobs/${job.number}`, actorId: user.id }, tx);
+        await notify({ tenantId: user.tenantId, userIds: [job.installerId], kind: "assigned", title: `Installation changed for ${jobNo(job.number, await getJobPrefix(user.tenantId))}`, body: job.title, link: `/jobs/${job.number}`, actorId: user.id }, tx);
     });
     revalidateJob(job.number);
   }, "Saved");
@@ -328,7 +328,7 @@ export async function assignJob(jobId: number, field: keyof typeof ASSIGN_FIELDS
         },
         tx,
       );
-      if (userId) await notify({ tenantId: user.tenantId, userIds: [userId], kind: "assigned", title: `You're the ${ASSIGN_FIELDS[field].toLowerCase()} on ${jobNo(job.number)}`, body: job.title, link: `/jobs/${job.number}`, actorId: user.id }, tx);
+      if (userId) await notify({ tenantId: user.tenantId, userIds: [userId], kind: "assigned", title: `You're the ${ASSIGN_FIELDS[field].toLowerCase()} on ${jobNo(job.number, await getJobPrefix(user.tenantId))}`, body: job.title, link: `/jobs/${job.number}`, actorId: user.id }, tx);
     });
     revalidateJob(job.number);
   }, "Assigned");
@@ -490,7 +490,7 @@ export async function sendProof(proofId: number, to: string, message: string | n
     const token = randomBytes(32).toString("base64url");
     const link = `${await appUrl()}/proof/${token}`;
     const { company } = await getSettings(user.tenantId);
-    const subject = `Proof ready for approval: ${job.title} (${jobNo(job.number)}) — Proof V${proof.version}`;
+    const subject = `Proof ready for approval: ${job.title} (${jobNo(job.number, await getJobPrefix(user.tenantId))}) — Proof V${proof.version}`;
     const text = [
       `Hello,`,
       ``,

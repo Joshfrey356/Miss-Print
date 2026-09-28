@@ -6,7 +6,7 @@ import { logActivity } from "@/lib/activity";
 import { addDays, invoiceNo, jobNo, money, today } from "@/lib/format";
 import { taxFor } from "@/lib/pricing/engine";
 import { UserError } from "@/lib/actions";
-import { nextNumber } from "@/lib/tenant";
+import { getJobPrefix, nextNumber } from "@/lib/tenant";
 import { queueAccountingSync } from "@/lib/accounting";
 import { PAYMENT_METHOD_LABELS } from "./labels";
 
@@ -118,6 +118,7 @@ export async function recordPayment(
       .returning();
     await recalcInvoicePaid(tx, tenantId, invoiceId);
     const [job] = inv.jobId ? await tx.select({ number: jobs.number }).from(jobs).where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, inv.jobId))) : [];
+    const jobPrefix = job ? await getJobPrefix(tenantId) : "";
     await logActivity(
       {
         tenantId,
@@ -127,7 +128,7 @@ export async function recordPayment(
         jobId: inv.jobId,
         customerId: inv.customerId,
         actorId: actor.id,
-        summary: `Payment of ${money(p.amountCents)} received (${PAYMENT_METHOD_LABELS[p.method]}) on ${invoiceNo(inv.number)}${job ? ` · ${jobNo(job.number)}` : ""}`,
+        summary: `Payment of ${money(p.amountCents)} received (${PAYMENT_METHOD_LABELS[p.method]}) on ${invoiceNo(inv.number)}${job ? ` · ${jobNo(job.number, jobPrefix)}` : ""}`,
       },
       tx,
     );

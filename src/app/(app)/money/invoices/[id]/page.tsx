@@ -76,7 +76,7 @@ export default async function InvoicePage({ params }: Props) {
               </Link>
               {job && (
                 <Link href={`/jobs/${job.number}?tab=money`} className="hover:underline">
-                  {jobNo(job.number)} · {job.title}
+                  {jobNo(job.number, brand.jobPrefix)} · {job.title}
                 </Link>
               )}
               {inv.poNumber && <span>PO {inv.poNumber}</span>}
@@ -337,7 +337,7 @@ export default async function InvoicePage({ params }: Props) {
                 {job && (
                   <tr>
                     <td className="pr-3 text-gray-600">Job</td>
-                    <td>{jobNo(job.number)}</td>
+                    <td>{jobNo(job.number, brand.jobPrefix)}</td>
                   </tr>
                 )}
               </tbody>

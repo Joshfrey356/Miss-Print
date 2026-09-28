@@ -46,7 +46,7 @@ export default async function ProofPage({ params }: { params: Promise<{ token: s
         ) : (
           <>
             <p className="text-sm font-medium uppercase tracking-wide text-slate-500">
-              {row.customer} · {jobNo(row.job.number)}
+              {row.customer} · {jobNo(row.job.number, brand?.jobPrefix ?? "")}
             </p>
             <h1 className="mt-1 text-2xl font-semibold text-slate-900 sm:text-3xl">{row.job.title}</h1>
             <p className="mt-1 text-lg text-slate-600">Proof version {row.proof.version}</p>

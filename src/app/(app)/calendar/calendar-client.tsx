@@ -9,7 +9,8 @@ import { Confirm } from "@/components/ui/confirm";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { calType, EVENT_TYPE_LABELS, type CalItem, type EditableEvent } from "@/lib/calendar/types";
 import type { EventType } from "@/lib/db/schema";
-import { fmtDate, jobNo, today } from "@/lib/format";
+import { fmtDate, today } from "@/lib/format";
+import { useJobNo } from "@/components/shop-context";
 import { cn } from "@/lib/utils";
 import { archiveEvent, saveEvent } from "./actions";
 
@@ -134,6 +135,7 @@ function EventDialog({
 }) {
   const [allDay, setAllDay] = React.useState(event ? event.allDay : false);
   const [pending, start] = React.useTransition();
+  const jobNo = useJobNo();
 
   if (event && !canEdit) {
     // Read-only details for roles without calendar.edit.
@@ -202,7 +204,7 @@ function EventDialog({
           )}
           <div className="grid gap-4 sm:grid-cols-3">
             <Field label="Job number" htmlFor="ev-job" hint="Optional">
-              <Input id="ev-job" name="jobNumber" defaultValue={event?.jobNumber ? jobNo(event.jobNumber) : ""} placeholder="MP-10428" />
+              <Input id="ev-job" name="jobNumber" defaultValue={event?.jobNumber ? jobNo(event.jobNumber) : ""} placeholder={jobNo(10428)} />
             </Field>
             <Field label="Where" htmlFor="ev-loc">
               <Select id="ev-loc" name="locationId" defaultValue={event?.locationId ? String(event.locationId) : ""}>

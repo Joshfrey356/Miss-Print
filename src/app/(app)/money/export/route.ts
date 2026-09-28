@@ -5,7 +5,7 @@ import { invoiceNo, jobNo, today } from "@/lib/format";
 import { listExpenses, listInvoices, listPayments } from "@/lib/money/queries";
 import { EXPENSE_CATEGORIES, EXPENSE_CATEGORY_LABELS, expensePaymentLabel, PAYMENT_METHOD_LABELS } from "@/lib/money/labels";
 import { csvMoney, toCsv } from "@/lib/money/csv";
-import { getTenant } from "@/lib/tenant";
+import { getJobPrefix, getTenant } from "@/lib/tenant";
 
 const STATUS: Record<string, string> = { draft: "Draft", sent: "Unpaid", partial: "Partially paid", paid: "Paid", void: "Void" };
 
@@ -18,6 +18,7 @@ export async function GET(req: Request) {
   const params = Object.fromEntries(url.searchParams.entries());
   const type = params.type ?? "invoices";
   const now = today();
+  const prefix = await getJobPrefix(user.tenantId);
   let csv: string;
 
   if (type === "invoices") {
@@ -27,7 +28,7 @@ export async function GET(req: Request) {
       rows.map((r) => [
         invoiceNo(r.number),
         r.customerName,
-        r.jobNumber ? jobNo(r.jobNumber) : "",
+        r.jobNumber ? jobNo(r.jobNumber, prefix) : "",
         r.jobTitle ?? "",
         r.poNumber ?? "",
         r.issueDate,
@@ -50,7 +51,7 @@ export async function GET(req: Request) {
         r.vendorName,
         EXPENSE_CATEGORY_LABELS[r.category],
         csvMoney(r.amountCents),
-        r.jobNumber ? jobNo(r.jobNumber) : "",
+        r.jobNumber ? jobNo(r.jobNumber, prefix) : "",
         r.jobTitle ?? "",
         r.paymentMethod ? expensePaymentLabel(r.paymentMethod) : "",
         r.notes ?? "",

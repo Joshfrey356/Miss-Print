@@ -23,22 +23,34 @@ export const getTenantBySlug = cache(async (slug: string): Promise<Tenant | unde
   return t;
 });
 
+/** The shop's job number prefix ("MP" → MP-10428). */
+export async function getJobPrefix(tenantId: number): Promise<string> {
+  return (await getTenant(tenantId))?.jobPrefix ?? "J";
+}
+
 /** Public URL of the shop's logo (cache-busted by upload time), or null when none is uploaded. */
 export function tenantLogoUrl(t: Pick<Tenant, "id" | "logoStorageKey" | "logoUpdatedAt">): string | null {
   if (!t.logoStorageKey) return null;
   return `/brand/${t.id}/logo?v=${t.logoUpdatedAt?.getTime() ?? 0}`;
 }
 
-export type NumberKind = "job" | "quote" | "invoice";
+export type NumberKind = "job" | "quote" | "invoice" | "po";
+const COUNTERS = {
+  job: tenants.nextJobNumber,
+  quote: tenants.nextQuoteNumber,
+  invoice: tenants.nextInvoiceNumber,
+  po: tenants.nextPoNumber,
+} as const;
 
 /**
- * Hand out the next job/quote/invoice number for a shop. Call inside the transaction that
- * inserts the row: the counter row stays locked until it commits, so numbers never collide.
+ * Hand out the next job/quote/invoice/purchase-order number for a shop. Call inside the transaction
+ * that inserts the row: the counter row stays locked until it commits, so numbers never collide.
  */
 export async function nextNumber(tx: Tx | typeof db, tenantId: number, kind: NumberKind): Promise<number> {
-  const col = kind === "job" ? tenants.nextJobNumber : kind === "quote" ? tenants.nextQuoteNumber : tenants.nextInvoiceNumber;
+  const col = COUNTERS[kind];
   const bump = sql`${col} + 1`;
-  const set = kind === "job" ? { nextJobNumber: bump } : kind === "quote" ? { nextQuoteNumber: bump } : { nextInvoiceNumber: bump };
+  const set =
+    kind === "job" ? { nextJobNumber: bump } : kind === "quote" ? { nextQuoteNumber: bump } : kind === "invoice" ? { nextInvoiceNumber: bump } : { nextPoNumber: bump };
   // RETURNING sees the incremented value, so the number handed out is one less.
   const [row] = await tx.update(tenants).set(set).where(eq(tenants.id, tenantId)).returning({ n: sql<number>`${col} - 1` });
   if (!row) throw new Error(`Shop ${tenantId} not found`);

@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useJobNo } from "@/components/shop-context";
 import { Command } from "cmdk";
 import * as D from "@radix-ui/react-dialog";
 import { Briefcase, FileText, Loader2, Receipt, Search, User, Users } from "lucide-react";
@@ -56,6 +57,7 @@ export function SearchButton({ compact }: { compact?: boolean }) {
 function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const router = useRouter();
   const [q, setQ] = useState("");
+  const jobNo = useJobNo();
   const [results, setResults] = useState<Result[]>([]);
   const [loading, setLoading] = useState(false);
   const reqId = useRef(0);
@@ -106,7 +108,7 @@ function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (
                 value={q}
                 onValueChange={setQ}
                 autoFocus
-                placeholder="Customer, MP-10428, phone, email, “4x8 banner”…"
+                placeholder={`Customer, ${jobNo(10428)}, phone, email, “4x8 banner”…`}
                 className="h-14 flex-1 bg-transparent text-base outline-none placeholder:text-slate-400"
               />
             </div>
@@ -119,7 +121,7 @@ function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (
               {q.trim().length < 2 && (
                 <div className="px-4 py-6 text-sm text-slate-500">
                   <p className="font-medium text-slate-700">Search everything</p>
-                  <p className="mt-1">Type a customer name, job number (MP-10428), quote (Q-5012), invoice (INV-7001), phone, email or a product like “banner”.</p>
+                  <p className="mt-1">Type a customer name, job number ({jobNo(10428)}), quote (Q-5012), invoice (INV-7001), phone, email or a product like “banner”.</p>
                 </div>
               )}
               {GROUPS.map((g) => {

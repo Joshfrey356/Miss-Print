@@ -15,6 +15,7 @@ import { SearchInput } from "@/components/search-input";
 import { DueText, LocationTag, OwnerTag } from "@/components/jobs/job-meta";
 import { ViewToggle } from "@/components/jobs/view-toggle";
 import { jobNo, money } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 import { cn } from "@/lib/utils";
 import { AutoSubmitSelect } from "@/components/auto-submit-select";
 
@@ -29,11 +30,12 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
   const user = await requirePagePermission("jobs.view");
   const sp = await searchParams;
   const view = sp.view ?? "open";
-  const [{ rows, total, page, pageSize }, counts, people, locations] = await Promise.all([
+  const [{ rows, total, page, pageSize }, counts, people, locations, prefix] = await Promise.all([
     listJobs({ ...sp, view, assignee: sp.assignee ? Number(sp.assignee) : undefined, page: Number(sp.page) || 1 }, user),
     jobViewCounts(user),
     getActiveUsers(user.tenantId),
     getLocations(user.tenantId),
+    getJobPrefix(user.tenantId),
   ]);
   const showMoney = can(user.role, "financials.view");
   const params = { q: sp.q, view: sp.view, location: sp.location, assignee: sp.assignee, sort: sp.sort, dir: sp.dir };
@@ -102,7 +104,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
                   <Tr key={j.id} className={cn("hover:bg-slate-50", j.overdue && "bg-red-50/40")}>
                     <Td className="whitespace-nowrap font-medium">
                       <Link href={`/jobs/${j.number}`} className="text-brand-700 hover:underline">
-                        {jobNo(j.number)}
+                        {jobNo(j.number, prefix)}
                       </Link>
                     </Td>
                     <Td className="min-w-64">

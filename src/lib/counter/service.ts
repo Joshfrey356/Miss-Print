@@ -8,7 +8,7 @@ import { UserError } from "@/lib/actions";
 import { emailProvider } from "@/lib/email";
 import { fmtDate, invoiceNo, money, today } from "@/lib/format";
 import { getSettings } from "@/lib/settings";
-import { nextNumber } from "@/lib/tenant";
+import { getJobPrefix, nextNumber } from "@/lib/tenant";
 import { changeJobStatus, convertQuoteToJob } from "@/lib/jobs/service";
 import { createInvoiceFromJob, recordPayment, voidInvoice } from "@/lib/money/service";
 import { cartTotals, cashPayment, dayTotals, overShort, overShortLabel } from "./math";
@@ -255,8 +255,8 @@ export async function invoiceForQuote(tenantId: number, quoteId: number, actor: 
 export async function emailReceipt(tenantId: number, invoiceId: number, to: string, actor: Actor) {
   const sale = await getCounterSale(tenantId, invoiceId);
   if (!sale) throw new UserError("Sale not found.");
-  const { company } = await getSettings(tenantId);
-  const { subject, text } = receiptEmail({ company, sale });
+  const [{ company }, jobPrefix] = await Promise.all([getSettings(tenantId), getJobPrefix(tenantId)]);
+  const { subject, text } = receiptEmail({ company, sale, jobPrefix });
   const result = await emailProvider().send({ to, subject, text, fromName: company.name, replyTo: company.email || undefined });
   await db.transaction(async (tx) => {
     await tx.insert(communications).values({

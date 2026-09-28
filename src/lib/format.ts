@@ -33,14 +33,49 @@ export const centsToInput = (cents: number | null | undefined) =>
 export const pct = (v: number | null | undefined, digits = 0) =>
   v == null || !Number.isFinite(v) ? "—" : `${(v * 100).toFixed(digits)}%`;
 
-export const jobNo = (n: number) => `MP-${n}`;
+/** A job number with the shop's prefix (tenants.jobPrefix): jobNo(10428, "MP") → "MP-10428". */
+export const jobNo = (n: number, prefix: string) => (prefix ? `${prefix}-${n}` : `#${n}`);
 export const quoteNo = (n: number) => `Q-${n}`;
 export const invoiceNo = (n: number) => `INV-${n}`;
+export const poNo = (n: number) => `PO-${n}`;
 
-/** Parse "MP-10428", "mp10428", "10428" → 10428 */
-export function parseJobNumber(s: string): number | null {
-  const m = s.trim().match(/^(?:mp[-\s]?)?(\d{4,7})$/i);
-  return m ? Number(m[1]) : null;
+/**
+ * Split a typed document number into its letters and number:
+ * "LS-1002" → { letters: "LS", n: 1002 }, "inv 7001" → { letters: "INV", n: 7001 }, "#1042" → { letters: "", n: 1042 }.
+ */
+export function parseNumberInput(s: string): { letters: string; n: number } | null {
+  const m = s.trim().match(/^([a-z]{1,5})?[-\s]?#?(\d{1,7})$/i);
+  return m ? { letters: (m[1] ?? "").toUpperCase(), n: Number(m[2]) } : null;
+}
+
+/**
+ * Parse "MP-10428", "mp10428", "#1042", "10428" → 10428.
+ * Without `prefix` any 1–5 letter prefix is accepted; with the shop's `prefix`, only that one
+ * (or none), so "INV-7001" or "Q-5012" aren't taken for job numbers.
+ */
+export function parseJobNumber(s: string, prefix?: string): number | null {
+  const p = parseNumberInput(s);
+  if (!p) return null;
+  if (prefix != null && p.letters && p.letters !== prefix.toUpperCase()) return null;
+  return p.n;
+}
+
+/** Clean a job prefix typed in settings: 1–5 letters, upper case ("mp" → "MP", "L-S" → "LS"). */
+export function normalizeJobPrefix(s: string): string | null {
+  const p = s.trim().toUpperCase().replace(/[\s\-_.]/g, "");
+  return /^[A-Z]{1,5}$/.test(p) ? p : null;
+}
+
+/** Suggested prefix for a new shop: its initials ("Lakeshore Signs" → "LS"). */
+export function jobPrefixFor(shopName: string): string {
+  const letters = shopName
+    .split(/\s+/)
+    .map((w) => w.replace(/[^a-z]/gi, "")[0])
+    .filter(Boolean)
+    .join("")
+    .toUpperCase()
+    .slice(0, 3);
+  return normalizeJobPrefix(letters) ?? "J";
 }
 
 // ---------------------------------------------------------------------------

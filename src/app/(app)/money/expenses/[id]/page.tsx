@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { requirePagePermission } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { centsToInput, fmtDateTime, jobNo, today } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 import { Card, CardBody } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { getVendorSuggestions } from "@/lib/money/expenses";
@@ -20,7 +21,7 @@ export default async function EditExpensePage({ params, searchParams }: { params
   const row = await getExpense(user.tenantId, Number(id));
   if (!row) notFound();
   const { e } = row;
-  const vendors = await getVendorSuggestions(user.tenantId);
+  const [vendors, prefix] = await Promise.all([getVendorSuggestions(user.tenantId), getJobPrefix(user.tenantId)]);
   const fromJob = sp.from === "job" && row.jobNumber != null;
   const listHref = can(user.role, "money.view") ? "/money?tab=expenses" : "/dashboard";
   const cancelHref = fromJob ? `/jobs/${row.jobNumber}?tab=money` : listHref;
@@ -30,7 +31,7 @@ export default async function EditExpensePage({ params, searchParams }: { params
       <PageHeader
         title="Edit expense"
         subtitle={`Added ${fmtDateTime(e.createdAt)}${row.createdByName ? ` by ${row.createdByName}` : ""}`}
-        back={fromJob ? { href: cancelHref, label: jobNo(row.jobNumber!) } : { href: listHref, label: "Expenses" }}
+        back={fromJob ? { href: cancelHref, label: jobNo(row.jobNumber!, prefix) } : { href: listHref, label: "Expenses" }}
       />
       <Card>
         <CardBody className="py-5">
@@ -46,7 +47,7 @@ export default async function EditExpensePage({ params, searchParams }: { params
               amount: centsToInput(e.amountCents),
               category: e.category,
               spentOn: e.spentOn,
-              job: row.jobNumber ? jobNo(row.jobNumber) : "",
+              job: row.jobNumber ? jobNo(row.jobNumber, prefix) : "",
               paymentMethod: normalizeExpensePayment(e.paymentMethod) ?? "",
               notes: e.notes ?? "",
               receipt: e.receiptFileId ? { id: e.receiptFileId, name: row.receiptName ?? "Receipt" } : null,

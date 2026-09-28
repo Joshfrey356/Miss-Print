@@ -1,14 +1,19 @@
+"use client";
 import * as React from "react";
 import Link from "next/link";
 import { cleanHandle, MENTION_GROUPS } from "@/lib/messages/channels";
 import type { Role } from "@/lib/db/schema";
 import { cn } from "@/lib/utils";
+import { useShop } from "@/components/shop-context";
 
-// URLs, job numbers (MP-10428) and @mentions, in one pass.
-const TOKEN_RE = /(https?:\/\/[^\s<]+[^\s<.,;:!?)\]'"])|\b(MP-\d{4,7})\b|(^|[^\w@])@([a-z][\w.-]{1,30})/gi;
+/** URLs, this shop's job numbers (e.g. MP-10428) and @mentions, in one pass. */
+function tokenRe(jobPrefix: string) {
+  const prefix = jobPrefix.replace(/[^A-Za-z0-9]/g, "") || "J";
+  return new RegExp(String.raw`(https?:\/\/[^\s<]+[^\s<.,;:!?)\]'"])|\b(${prefix}-(\d{3,7}))\b|(^|[^\w@])@([a-z][\w.-]{1,30})`, "gi");
+}
 
 /**
- * Message text with @mentions highlighted (yours stand out), links and MP-numbers clickable.
+ * Message text with @mentions highlighted (yours stand out), links and job numbers (with this shop's prefix) clickable.
  * `handles` = every known user handle; `me` = the viewer's handle and role.
  */
 export function MessageBody({
@@ -23,10 +28,12 @@ export function MessageBody({
   /** Render links as plain text (when the whole message is already inside a link). */
   noLinks?: boolean;
 }) {
+  const { jobPrefix } = useShop();
+  const re = React.useMemo(() => tokenRe(jobPrefix), [jobPrefix]);
   const out: React.ReactNode[] = [];
   let last = 0;
   let key = 0;
-  for (const m of body.matchAll(TOKEN_RE)) {
+  for (const m of body.matchAll(re)) {
     const start = m.index!;
     if ((m[1] || m[2]) && noLinks) continue;
     if (m[1]) {
@@ -40,17 +47,17 @@ export function MessageBody({
     } else if (m[2]) {
       out.push(body.slice(last, start));
       out.push(
-        <Link key={key++} href={`/jobs/${m[2].slice(3)}`} className="font-medium text-brand-600 hover:underline">
+        <Link key={key++} href={`/jobs/${m[3]}`} className="font-medium text-brand-600 hover:underline">
           {m[2]}
         </Link>,
       );
       last = start + m[0].length;
-    } else if (m[4]) {
-      const raw = m[4];
+    } else if (m[5]) {
+      const raw = m[5];
       const h = cleanHandle(raw);
       const group = MENTION_GROUPS.find((g) => g.handle === h);
       if (!handles.has(h) && !group) continue;
-      const atStart = start + (m[3]?.length ?? 0);
+      const atStart = start + (m[4]?.length ?? 0);
       const trailing = raw.match(/[.-]+$/)?.[0] ?? "";
       const tagText = "@" + raw.slice(0, raw.length - trailing.length);
       const mine = me && (me.handle.toLowerCase() === h || (group && me.role && group.roles.includes(me.role)));

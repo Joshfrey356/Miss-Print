@@ -5,7 +5,8 @@ import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { DndContext, DragOverlay, PointerSensor, TouchSensor, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { toast } from "sonner";
 import { BOARD_COLUMNS, STATUS_LABELS, type BoardColumn } from "@/lib/jobs/workflow";
-import { addDays, jobNo, today } from "@/lib/format";
+import { addDays, today } from "@/lib/format";
+import { useJobNo } from "@/components/shop-context";
 import { cn } from "@/lib/utils";
 import { moveJobOnBoard } from "@/app/(app)/jobs/actions";
 import { JobCardView, sortCards, type BoardCard } from "./job-card";
@@ -82,6 +83,7 @@ export function ProductionBoard({ jobs: initial, people, locations, canMove }: {
 
   const columns = BOARD_COLUMNS.filter((c) => !dept || c.department === dept || (dept === "front" && c.key === "complete"));
 
+  const jobNo = useJobNo();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }), useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 6 } }));
 
   function onDragEnd(e: DragEndEvent) {

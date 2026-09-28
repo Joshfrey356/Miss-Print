@@ -6,6 +6,7 @@ import { logActivity } from "@/lib/activity";
 import { emailProvider } from "@/lib/email";
 import { daysBetween, fmtDate, invoiceNo, jobNo, money, today } from "@/lib/format";
 import { getSettings, type CompanyProfile } from "@/lib/settings";
+import { getJobPrefix } from "@/lib/tenant";
 import { UserError } from "@/lib/actions";
 import { balanceOf } from "./service";
 import { invoicePayUrl, MIN_CARD_CENTS } from "@/lib/payments/links";
@@ -21,6 +22,8 @@ export function paymentReminderEmail(p: {
   dueDate: string;
   jobNumber?: number | null;
   jobTitle?: string | null;
+  /** The shop's job number prefix (tenants.jobPrefix), e.g. "MP". */
+  jobPrefix: string;
   now?: string;
   /** "Pay online" link (Stripe), when the shop takes card payments online. */
   payUrl?: string | null;
@@ -28,7 +31,7 @@ export function paymentReminderEmail(p: {
   const now = p.now ?? today();
   const late = daysBetween(p.dueDate, now);
   const inv = invoiceNo(p.invoiceNumber);
-  const forJob = p.jobNumber ? ` for ${jobNo(p.jobNumber)}${p.jobTitle ? ` (${p.jobTitle})` : ""}` : "";
+  const forJob = p.jobNumber ? ` for ${jobNo(p.jobNumber, p.jobPrefix)}${p.jobTitle ? ` (${p.jobTitle})` : ""}` : "";
   const due =
     late > 0
       ? `was due on ${fmtDate(p.dueDate, { year: true })} (${late} day${late === 1 ? "" : "s"} ago)`
@@ -85,7 +88,7 @@ export async function sendPaymentReminder(tenantId: number, invoiceId: number, a
   const to = await billingEmail(tenantId, inv.customerId);
   if (!to) throw new UserError(`${row.customerName} has no email address on file. Add one to the customer first.`);
 
-  const { company } = await getSettings(tenantId);
+  const [{ company }, jobPrefix] = await Promise.all([getSettings(tenantId), getJobPrefix(tenantId)]);
   let payUrl: string | null = null;
   try {
     payUrl = balance >= MIN_CARD_CENTS ? await invoicePayUrl(tenantId, inv.id) : null;
@@ -101,6 +104,7 @@ export async function sendPaymentReminder(tenantId: number, invoiceId: number, a
     dueDate: inv.dueDate,
     jobNumber: row.jobNumber,
     jobTitle: row.jobTitle,
+    jobPrefix,
   });
   const result = await emailProvider().send({ to, subject, text, fromName: company.name, replyTo: company.email || undefined });
 

@@ -13,6 +13,7 @@ import {
   type CustomerJobSort,
 } from "@/lib/customers/queries";
 import { TERMS_LABELS } from "@/lib/money/service";
+import { getJobPrefix } from "@/lib/tenant";
 import { fmtDate, money, plural } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -265,12 +266,13 @@ async function Overview({
   billingAddress: string | null;
   archived: boolean;
 }) {
-  const [openJobs, pastJobs, openQuotes, contacts, activity] = await Promise.all([
+  const [openJobs, pastJobs, openQuotes, contacts, activity, jobPrefix] = await Promise.all([
     can.jobs ? getCustomerJobs(tenantId, id, { showMoney: can.money, openOnly: true }) : Promise.resolve([]),
     can.jobs ? getCustomerJobs(tenantId, id, { showMoney: can.money, sort: "created", dir: "desc" }) : Promise.resolve([]),
     can.quotes ? getCustomerQuotes(tenantId, id, { showMoney: can.money, openOnly: true }) : Promise.resolve([]),
     getContacts(tenantId, id),
     getCustomerActivity(tenantId, id, { showMoney: can.money, showCost: can.cost, limit: 8 }),
+    getJobPrefix(tenantId),
   ]);
   const completed = pastJobs.filter((j) => j.status === "completed").slice(0, 5);
   return (
@@ -280,6 +282,7 @@ async function Overview({
           <JobList
             title="What we're doing for them"
             jobs={openJobs}
+            jobPrefix={jobPrefix}
             showMoney={can.money}
             empty="No open jobs for this customer"
             action={
@@ -306,8 +309,8 @@ async function Overview({
             }
           />
         )}
-        {can.jobs && <PastOrders customerId={id} canReorder={can.newJob && !archived} jobs={completed} total={pastJobs.filter((j) => j.status === "completed").length} showMoney={can.money} />}
-        <ActivityCard activity={activity} />
+        {can.jobs && <PastOrders customerId={id} jobPrefix={jobPrefix} canReorder={can.newJob && !archived} jobs={completed} total={pastJobs.filter((j) => j.status === "completed").length} showMoney={can.money} />}
+        <ActivityCard activity={activity} jobPrefix={jobPrefix} />
       </div>
       <div className="space-y-5">
         <ContactsCard customerId={id} contacts={contacts} canEdit={can.edit} />

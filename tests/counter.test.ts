@@ -76,6 +76,7 @@ test("receipt email lists lines, payments with change and PAID IN FULL", () => {
       items: [{ description: "Color copies", quantity: 50, amountCents: 1359 }],
       payments: [{ p: { method: "cash", amountCents: 1454, tenderedCents: 2000, reference: null, voidedAt: null, receivedOn: "2026-09-28" } }],
     },
+    jobPrefix: "MP",
   });
   assert.equal(subject, "Your receipt from Miss Print — INV-7001");
   assert.match(text, /Hi there,/);
@@ -83,6 +84,23 @@ test("receipt email lists lines, payments with change and PAID IN FULL", () => {
   assert.match(text, /Sales tax \(7%\)\s+\$0\.95/);
   assert.match(text, /change \$5\.46/);
   assert.match(text, /PAID IN FULL/);
+  assert.doesNotMatch(text, /Your order is/);
+});
+
+test("receipt email names the job with the shop's prefix", () => {
+  const { text } = receiptEmail({
+    company: { name: "Lakeshore Signs", tagline: "", phone: "", email: "", website: "", address: "" },
+    sale: {
+      inv: { number: 7002, issueDate: "2026-09-28", subtotalCents: 1000, taxCents: 0, taxRate: 0, totalCents: 1000, paidCents: 0, status: "open" },
+      customer: { name: "Dana" },
+      job: { number: 1002 },
+      items: [{ description: "Yard signs", quantity: 10, amountCents: 1000 }],
+      payments: [],
+    },
+    jobPrefix: "LS",
+  });
+  assert.match(text, /Your order is LS-1002\./);
+  assert.doesNotMatch(text, /MP-/);
 });
 
 import { counterPrintInput, counterPrintOptions, printDescription, shortProduction } from "../src/lib/counter/print";

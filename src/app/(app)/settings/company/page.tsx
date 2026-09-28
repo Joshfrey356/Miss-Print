@@ -22,7 +22,7 @@ export default async function CompanyPage({ searchParams }: { searchParams: Prom
           </div>
         )}
         <LogoForm brand={brand} />
-        <CompanyForm company={company} />
+        <CompanyForm company={company} jobPrefix={brand.jobPrefix} />
       </div>
     </SettingsPage>
   );

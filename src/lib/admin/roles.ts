@@ -23,6 +23,9 @@ export const PERMISSION_INFO: { group: string; items: { key: Permission; label: 
       { key: "calendar.edit", label: "Add and change calendar entries" },
       { key: "messages.use", label: "Use messages and job chat" },
       { key: "tasks.use", label: "Use tasks" },
+      { key: "schedule.edit", label: "Book jobs on machines (schedule)" },
+      { key: "inventory.view", label: "See stock levels" },
+      { key: "inventory.edit", label: "Receive, use and count stock" },
     ],
   },
   {
@@ -43,6 +46,7 @@ export const PERMISSION_INFO: { group: string; items: { key: Permission; label: 
       { key: "money.edit", label: "Create invoices and record payments" },
       { key: "money.void", label: "Void invoices and payments" },
       { key: "counter.use", label: "Ring up counter sales and take payments" },
+      { key: "purchasing.edit", label: "Create and receive purchase orders" },
       { key: "expenses.edit", label: "Enter expenses" },
     ],
   },

@@ -22,6 +22,7 @@ import { MessageBody } from "@/components/chat/message-body";
 import { Avatar } from "@/components/ui/avatar";
 import { EmptyState } from "@/components/ui/empty-state";
 import { fmtDateTime, jobNo, timeAgo } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Messages" };
@@ -38,7 +39,7 @@ export default async function MessagesPage({ searchParams }: { searchParams: SP 
   // On phones we show the list until something is picked; desktop always shows a stream.
   const hasSelection = Boolean(requested) || showMentions;
 
-  const [summaries, convos, users, stream, mentionItems, [{ unreadMentions }]] = await Promise.all([
+  const [summaries, convos, users, stream, mentionItems, [{ unreadMentions }], prefix] = await Promise.all([
     getChannelSummaries(user.tenantId, user.role),
     getRecentJobConversations(user.tenantId, 14),
     getActiveUsers(user.tenantId),
@@ -55,6 +56,7 @@ export default async function MessagesPage({ searchParams }: { searchParams: SP 
             isNull(notifications.readAt),
           ),
         ),
+    getJobPrefix(user.tenantId),
   ]);
   const handles = new Set(users.map((u) => u.handle.toLowerCase()));
   const me = { handle: user.handle, role: user.role };
@@ -96,7 +98,7 @@ export default async function MessagesPage({ searchParams }: { searchParams: SP 
             {convos.length === 0 ? (
               <p className="px-3 py-3 text-sm text-slate-500">No job has had messages in the last 2 weeks.</p>
             ) : (
-              convos.map((c) => <ConversationLink key={c.jobId} c={c} />)
+              convos.map((c) => <ConversationLink key={c.jobId} c={c} prefix={prefix} />)
             )}
           </ListSection>
         </aside>
@@ -115,7 +117,7 @@ export default async function MessagesPage({ searchParams }: { searchParams: SP 
                 ) : (
                   <ul className="divide-y divide-slate-100">
                     {mentionItems.map((m) => (
-                      <MentionRow key={m.id} m={m} handles={handles} me={me} />
+                      <MentionRow key={m.id} m={m} handles={handles} me={me} prefix={prefix} />
                     ))}
                   </ul>
                 )}
@@ -185,7 +187,7 @@ function ChannelLink({ c, summary, active, restricted }: { c: { key: string; lab
   );
 }
 
-function ConversationLink({ c }: { c: JobConversation }) {
+function ConversationLink({ c, prefix }: { c: JobConversation; prefix: string }) {
   return (
     <Link href={`/jobs/${c.jobNumber}?tab=chat`} className="flex items-center gap-3 rounded-lg px-3 py-2.5 hover:bg-white">
       <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
@@ -194,7 +196,7 @@ function ConversationLink({ c }: { c: JobConversation }) {
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline justify-between gap-2">
           <span className="truncate text-[15px] text-slate-800">
-            <span className="font-semibold">{jobNo(c.jobNumber)}</span> <span className="text-slate-600">{c.jobTitle}</span>
+            <span className="font-semibold">{jobNo(c.jobNumber, prefix)}</span> <span className="text-slate-600">{c.jobTitle}</span>
           </span>
           <span className="shrink-0 text-xs text-slate-400" suppressHydrationWarning>
             {timeAgo(c.lastAt)}
@@ -224,7 +226,7 @@ function StreamHeader({ icon, title, description }: { icon: React.ReactNode; tit
   );
 }
 
-function MentionRow({ m, handles, me }: { m: MentionItem; handles: Set<string>; me: { handle: string; role: Role } }) {
+function MentionRow({ m, handles, me, prefix }: { m: MentionItem; handles: Set<string>; me: { handle: string; role: Role }; prefix: string }) {
   return (
     <li>
       <Link href={m.href} className="flex gap-3 px-4 py-3.5 hover:bg-slate-50 sm:px-5">
@@ -235,7 +237,7 @@ function MentionRow({ m, handles, me }: { m: MentionItem; handles: Set<string>; 
             <span className="text-sm text-brand-700">
               {m.source.kind === "job" ? (
                 <>
-                  on <span className="font-medium">{jobNo(m.source.number)}</span> · {m.source.title}
+                  on <span className="font-medium">{jobNo(m.source.number, prefix)}</span> · {m.source.title}
                 </>
               ) : (
                 <>in #{m.source.label}</>

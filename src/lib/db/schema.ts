@@ -135,6 +135,9 @@ export const tenants = pgTable("tenants", {
   nextJobNumber: integer("next_job_number").notNull().default(1001),
   nextQuoteNumber: integer("next_quote_number").notNull().default(1001),
   nextInvoiceNumber: integer("next_invoice_number").notNull().default(1001),
+  nextPoNumber: integer("next_po_number").notNull().default(1001),
+  /** Shown before job numbers: "MP" → MP-10428. Set per shop in Settings → Company Profile. */
+  jobPrefix: text("job_prefix").notNull().default("J"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   /** Set to suspend a shop: its people can no longer sign in. */
   archivedAt: timestamp("archived_at", { withTimezone: true }),
@@ -440,8 +443,16 @@ export const materials = pgTable(
     costPerMCents: integer("cost_per_m_cents"),
     /** Paper stocks: extra charged on top of cost (0.3 = +30%). Null = the shop's default paper markup. */
     markupPct: numeric("markup_pct", { precision: 6, scale: 4, mode: "number" }),
+    /** Inventory: count this item's stock (on hand, reserved for jobs, on order). */
+    trackInventory: boolean("track_inventory").notNull().default(false),
+    /** In the item's unit (sheets for paper). Changed only through inventory movements. */
     quantityOnHand: numeric("quantity_on_hand", { precision: 12, scale: 2, mode: "number" }),
+    /** Reorder when available (on hand − reserved + on order) falls to this. */
     reorderLevel: numeric("reorder_level", { precision: 12, scale: 2, mode: "number" }),
+    /** Usual amount to order. */
+    reorderQuantity: numeric("reorder_quantity", { precision: 12, scale: 2, mode: "number" }),
+    /** Where it's kept, e.g. "Hammond · rack B". */
+    binLocation: text("bin_location"),
     importId: integer("import_id"),
     active: boolean("active").notNull().default(true),
   },
@@ -493,6 +504,9 @@ export const equipment = pgTable(
     setupSpoilageSheets: integer("setup_spoilage_sheets").notNull().default(0),
     runSpoilagePct: numeric("run_spoilage_pct", { precision: 6, scale: 4, mode: "number" }).notNull().default(0),
     notes: text("notes"),
+    /** Scheduling: hours this machine runs on a work day, and which days (0 = Sunday … 6 = Saturday). */
+    hoursPerDay: numeric("hours_per_day", { precision: 5, scale: 2, mode: "number" }).notNull().default(8),
+    workDays: jsonb("work_days").$type<number[]>().notNull().default([1, 2, 3, 4, 5]),
     sortOrder: integer("sort_order").notNull().default(0),
     active: boolean("active").notNull().default(true),
   },
@@ -558,6 +572,11 @@ export const quotes = pgTable(
     sentAt: timestamp("sent_at", { withTimezone: true }),
     respondedAt: timestamp("responded_at", { withTimezone: true }),
     lostReason: text("lost_reason"),
+    /** Online acceptance from the customer portal: who, from where, and their note. */
+    responseName: text("response_name"),
+    responseEmail: text("response_email"),
+    responseIp: text("response_ip"),
+    responseNote: text("response_note"),
     createdBy: integer("created_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -621,7 +640,7 @@ export const jobs = pgTable(
   {
     id: serial("id").primaryKey(),
     tenantId: tenantId(),
-    number: integer("number").notNull(), // shown as MP-10428; from nextNumber(tx, tenantId, "job")
+    number: integer("number").notNull(), // shown with the shop's prefix, e.g. MP-10428; from nextNumber(tx, tenantId, "job")
     customerId: integer("customer_id").notNull(),
     contactId: integer("contact_id"),
     quoteId: integer("quote_id"),
@@ -766,6 +785,8 @@ export const files = pgTable(
     preflightStatus: preflightEnum("preflight_status"),
     preflight: jsonb("preflight"),
     uploadedBy: integer("uploaded_by"),
+    /** Uploaded by the customer in the customer portal (uploadedBy is then empty). */
+    uploadedByCustomer: boolean("uploaded_by_customer").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
   },
@@ -1129,6 +1150,8 @@ export const registerCloses = pgTable(
     tenantId: tenantId(),
     locationId: integer("location_id"),
     businessDate: date("business_date").notNull(),
+    /** Cash in the drawer at the start of the day (expected = float + cash taken). */
+    openingFloatCents: integer("opening_float_cents").notNull().default(0),
     expectedCashCents: integer("expected_cash_cents").notNull(),
     countedCashCents: integer("counted_cash_cents").notNull(),
     /** Totals by payment method for the day, e.g. { cash: 12000, card: 54000 } */
@@ -1220,6 +1243,258 @@ export const expenses = pgTable(
     ref("expenses_created_by_fk", t.tenantId, t.createdBy, users),
     index("expenses_job_idx").on(t.jobId),
     index("expenses_date_idx").on(t.tenantId, t.spentOn),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Inventory & purchasing
+// ---------------------------------------------------------------------------
+
+/**
+ * Every change to a material's stock, newest last. materials.quantityOnHand is the running total and is
+ * only changed together with a movement row (src/lib/inventory).
+ */
+export const inventoryMovements = pgTable(
+  "inventory_movements",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: tenantId(),
+    materialId: integer("material_id").notNull(),
+    /** receive = delivery in, use = used on a job, adjust = correction, count = physical count, return = back to vendor. */
+    kind: text("kind").$type<"receive" | "use" | "adjust" | "count" | "return">().notNull(),
+    /** Signed change in the material's unit (+ in, − out). */
+    quantity: numeric("quantity", { precision: 12, scale: 2, mode: "number" }).notNull(),
+    balanceAfter: numeric("balance_after", { precision: 12, scale: 2, mode: "number" }).notNull(),
+    jobId: integer("job_id"),
+    purchaseOrderId: integer("purchase_order_id"),
+    note: text("note"),
+    createdBy: integer("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    tenantKey("inventory_movements", t),
+    ref("inventory_movements_material_fk", t.tenantId, t.materialId, materials),
+    ref("inventory_movements_job_fk", t.tenantId, t.jobId, jobs),
+    ref("inventory_movements_po_fk", t.tenantId, t.purchaseOrderId, purchaseOrders),
+    ref("inventory_movements_created_by_fk", t.tenantId, t.createdBy, users),
+    index("inventory_movements_material_idx").on(t.tenantId, t.materialId, t.createdAt),
+  ],
+);
+
+/** Stock set aside for a job (e.g. the paper its estimate needs), until it's used or released. */
+export const inventoryReservations = pgTable(
+  "inventory_reservations",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: tenantId(),
+    materialId: integer("material_id").notNull(),
+    jobId: integer("job_id").notNull(),
+    jobItemId: integer("job_item_id"),
+    quantity: numeric("quantity", { precision: 12, scale: 2, mode: "number" }).notNull(),
+    status: text("status").$type<"reserved" | "used" | "released">().notNull().default("reserved"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    tenantKey("inventory_reservations", t),
+    ref("inventory_reservations_material_fk", t.tenantId, t.materialId, materials),
+    ref("inventory_reservations_job_fk", t.tenantId, t.jobId, jobs),
+    ref("inventory_reservations_job_item_fk", t.tenantId, t.jobItemId, jobItems).onDelete("cascade"),
+    index("inventory_reservations_material_idx").on(t.tenantId, t.materialId, t.status),
+    index("inventory_reservations_job_idx").on(t.jobId),
+  ],
+);
+
+/** Purchase orders to vendors: stock replenishment, or outside work bought for a job. */
+export const purchaseOrders = pgTable(
+  "purchase_orders",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: tenantId(),
+    number: integer("number").notNull(), // shown as PO-1001; from nextNumber(tx, tenantId, "po")
+    vendorId: integer("vendor_id").notNull(),
+    /** Set when the whole order is for one job (outside services, special paper). */
+    jobId: integer("job_id"),
+    status: text("status").$type<"draft" | "ordered" | "partial" | "received" | "cancelled">().notNull().default("draft"),
+    orderedOn: date("ordered_on"),
+    expectedOn: date("expected_on"),
+    receivedOn: date("received_on"),
+    /** Deliver to this location. */
+    locationId: integer("location_id"),
+    notes: text("notes"),
+    subtotalCents: integer("subtotal_cents").notNull().default(0),
+    shippingCents: integer("shipping_cents").notNull().default(0),
+    taxCents: integer("tax_cents").notNull().default(0),
+    totalCents: integer("total_cents").notNull().default(0),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdBy: integer("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    tenantKey("purchase_orders", t),
+    uniqueIndex("purchase_orders_tenant_number_idx").on(t.tenantId, t.number),
+    ref("purchase_orders_vendor_fk", t.tenantId, t.vendorId, vendors),
+    ref("purchase_orders_job_fk", t.tenantId, t.jobId, jobs),
+    ref("purchase_orders_location_fk", t.tenantId, t.locationId, locations),
+    ref("purchase_orders_created_by_fk", t.tenantId, t.createdBy, users),
+    index("purchase_orders_status_idx").on(t.tenantId, t.status),
+  ],
+);
+
+export const purchaseOrderItems = pgTable(
+  "purchase_order_items",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: tenantId(),
+    purchaseOrderId: integer("purchase_order_id").notNull(),
+    /** Stock item being bought; null for outside services / one-off items. */
+    materialId: integer("material_id"),
+    description: text("description").notNull(),
+    quantity: numeric("quantity", { precision: 12, scale: 2, mode: "number" }).notNull(),
+    receivedQuantity: numeric("received_quantity", { precision: 12, scale: 2, mode: "number" }).notNull().default(0),
+    unit: text("unit"),
+    /** Cost per unit (sub-cent allowed, e.g. per sheet); amountCents is the rounded line total. */
+    unitCostCents: numeric("unit_cost_cents", { precision: 12, scale: 4, mode: "number" }).notNull().default(0),
+    amountCents: integer("amount_cents").notNull().default(0),
+    /** Charge this line's cost to a job (job costing). */
+    jobId: integer("job_id"),
+    sortOrder: integer("sort_order").notNull().default(0),
+  },
+  (t) => [
+    tenantKey("purchase_order_items", t),
+    ref("po_items_po_fk", t.tenantId, t.purchaseOrderId, purchaseOrders).onDelete("cascade"),
+    ref("po_items_material_fk", t.tenantId, t.materialId, materials),
+    ref("po_items_job_fk", t.tenantId, t.jobId, jobs),
+    index("po_items_po_idx").on(t.purchaseOrderId),
+    index("po_items_material_idx").on(t.tenantId, t.materialId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Scheduling
+// ---------------------------------------------------------------------------
+
+/** Time booked on a machine for a job (the equipment schedule board). */
+export const scheduleBlocks = pgTable(
+  "schedule_blocks",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: tenantId(),
+    equipmentId: integer("equipment_id").notNull(),
+    jobId: integer("job_id"),
+    jobItemId: integer("job_item_id"),
+    /** Shown on the board, e.g. "MP-10428 · 1,000 cards" or "Maintenance". */
+    title: text("title").notNull(),
+    startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+    endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
+    status: text("status").$type<"scheduled" | "running" | "done">().notNull().default("scheduled"),
+    operatorId: integer("operator_id"),
+    notes: text("notes"),
+    createdBy: integer("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    tenantKey("schedule_blocks", t),
+    ref("schedule_blocks_equipment_fk", t.tenantId, t.equipmentId, equipment),
+    ref("schedule_blocks_job_fk", t.tenantId, t.jobId, jobs),
+    ref("schedule_blocks_job_item_fk", t.tenantId, t.jobItemId, jobItems).onDelete("cascade"),
+    ref("schedule_blocks_operator_fk", t.tenantId, t.operatorId, users),
+    ref("schedule_blocks_created_by_fk", t.tenantId, t.createdBy, users),
+    index("schedule_blocks_equipment_idx").on(t.tenantId, t.equipmentId, t.startsAt),
+    index("schedule_blocks_job_idx").on(t.jobId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Customer portal
+// ---------------------------------------------------------------------------
+
+/**
+ * Sign-in links for the customer portal, emailed to a customer contact. Like proof links, only a hash
+ * of the token is stored. Using one starts a portal session.
+ */
+export const portalLinks = pgTable(
+  "portal_links",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: tenantId(),
+    customerId: integer("customer_id").notNull(),
+    contactId: integer("contact_id"),
+    email: text("email").notNull(),
+    tokenHash: text("token_hash").notNull().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdBy: integer("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    tenantKey("portal_links", t),
+    ref("portal_links_customer_fk", t.tenantId, t.customerId, customers),
+    ref("portal_links_contact_fk", t.tenantId, t.contactId, customerContacts),
+    ref("portal_links_created_by_fk", t.tenantId, t.createdBy, users),
+  ],
+);
+
+/** A signed-in customer portal browser (cookie holds the raw token; only its hash is stored). */
+export const portalSessions = pgTable(
+  "portal_sessions",
+  {
+    id: text("id").primaryKey(),
+    tenantId: tenantId(),
+    customerId: integer("customer_id").notNull(),
+    contactId: integer("contact_id"),
+    email: text("email").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    ip: text("ip"),
+    userAgent: text("user_agent"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    ref("portal_sessions_customer_fk", t.tenantId, t.customerId, customers).onDelete("cascade"),
+    ref("portal_sessions_contact_fk", t.tenantId, t.contactId, customerContacts),
+    index("portal_sessions_customer_idx").on(t.tenantId, t.customerId),
+  ],
+);
+
+/** Things customers ask for in the portal: a reorder, a new quote, or a message. Staff handle them. */
+export const portalRequests = pgTable(
+  "portal_requests",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: tenantId(),
+    customerId: integer("customer_id").notNull(),
+    contactId: integer("contact_id"),
+    kind: text("kind").$type<"reorder" | "quote" | "message">().notNull(),
+    /** The job being reordered / talked about. */
+    jobId: integer("job_id"),
+    subject: text("subject").notNull(),
+    body: text("body"),
+    /** Details the customer gave, e.g. { quantity, neededBy, fileIds }. */
+    details: jsonb("details").$type<Record<string, unknown>>(),
+    fromName: text("from_name"),
+    fromEmail: text("from_email"),
+    status: text("status").$type<"new" | "handled">().notNull().default("new"),
+    /** What staff made of it (a quote or job). */
+    quoteId: integer("quote_id"),
+    resultJobId: integer("result_job_id"),
+    handledBy: integer("handled_by"),
+    handledAt: timestamp("handled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    tenantKey("portal_requests", t),
+    ref("portal_requests_customer_fk", t.tenantId, t.customerId, customers),
+    ref("portal_requests_contact_fk", t.tenantId, t.contactId, customerContacts),
+    ref("portal_requests_job_fk", t.tenantId, t.jobId, jobs),
+    ref("portal_requests_quote_fk", t.tenantId, t.quoteId, quotes),
+    ref("portal_requests_result_job_fk", t.tenantId, t.resultJobId, jobs),
+    ref("portal_requests_handled_by_fk", t.tenantId, t.handledBy, users),
+    index("portal_requests_status_idx").on(t.tenantId, t.status, t.createdAt),
   ],
 );
 

@@ -85,7 +85,7 @@ async function main() {
 
   // ---------- shop (tenant) ----------
   // Numbers continue Miss Print's existing ranges (MP-10400…, Q-5000…, INV-7000…).
-  const [shop] = await db.insert(s.tenants).values({ slug: "miss-print", name: "Miss Print", nextJobNumber: 10400, nextQuoteNumber: 5000, nextInvoiceNumber: 7000 }).returning();
+  const [shop] = await db.insert(s.tenants).values({ slug: "miss-print", name: "Miss Print", jobPrefix: "MP", nextJobNumber: 10400, nextQuoteNumber: 5000, nextInvoiceNumber: 7000 }).returning();
   const T = shop!.id;
   const nextJobNo = counter(shop!.nextJobNumber);
   const nextQuoteNo = counter(shop!.nextQuoteNumber);
@@ -831,7 +831,7 @@ async function main() {
  * make it easy to spot one shop's data leaking into the other.
  */
 async function seedLakeshore(passwordHash: string) {
-  const [shop] = await db.insert(s.tenants).values({ slug: "lakeshore-signs", name: "Lakeshore Signs" }).returning();
+  const [shop] = await db.insert(s.tenants).values({ slug: "lakeshore-signs", name: "Lakeshore Signs", jobPrefix: "LS" }).returning();
   const T = shop!.id;
   const nextJobNo = counter(1001);
   const nextQuoteNo = counter(1001);

@@ -8,6 +8,7 @@ import { int, runAction, str, UserError, type ActionResult } from "@/lib/actions
 import { logActivity } from "@/lib/activity";
 import { notify } from "@/lib/notifications";
 import { jobNo } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -87,7 +88,7 @@ export async function createTask(formData: FormData): Promise<ActionResult<{ id:
             tenantId: user.tenantId,
             userIds: [assignedTo],
             kind: "assigned",
-            title: `${user.name.split(" ")[0]} gave you a task${job ? ` on ${jobNo(job.number)}` : ""}`,
+            title: `${user.name.split(" ")[0]} gave you a task${job ? ` on ${jobNo(job.number, await getJobPrefix(user.tenantId))}` : ""}`,
             body: title,
             link: taskLink(job),
             actorId: user.id,
@@ -171,7 +172,7 @@ export async function updateTask(formData: FormData): Promise<ActionResult> {
             tenantId: user.tenantId,
             userIds: [assignedTo],
             kind: "assigned",
-            title: `${user.name.split(" ")[0]} gave you a task${j ? ` on ${jobNo(j.number)}` : ""}`,
+            title: `${user.name.split(" ")[0]} gave you a task${j ? ` on ${jobNo(j.number, await getJobPrefix(user.tenantId))}` : ""}`,
             body: title,
             link: taskLink(j ?? null),
             actorId: user.id,

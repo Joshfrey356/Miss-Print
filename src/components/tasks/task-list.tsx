@@ -11,7 +11,8 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
 import { archiveTask, createTask, toggleTask, updateTask } from "@/lib/tasks/actions";
 import type { TaskItem, TaskUser } from "@/lib/tasks/types";
-import { addDays, daysBetween, dueLabel, fmtDate, jobNo, today } from "@/lib/format";
+import { addDays, daysBetween, dueLabel, fmtDate, today } from "@/lib/format";
+import { useJobNo } from "@/components/shop-context";
 import { cn } from "@/lib/utils";
 
 export type { TaskItem, TaskUser } from "@/lib/tasks/types";
@@ -129,6 +130,7 @@ function TaskRow({
   onToggle: () => void;
   onEdit: () => void;
 }) {
+  const jobNo = useJobNo();
   const done = Boolean(t.completedAt);
   const now = today();
   const diff = t.dueDate ? daysBetween(now, t.dueDate) : null;
@@ -308,6 +310,7 @@ function AddTaskRow({ users, jobId, customerId, compact }: { users: TaskUser[]; 
 // ---------------------------------------------------------------------------
 function EditTaskDialog({ task, users, onClose, onRemoved }: { task: TaskItem | null; users: TaskUser[]; onClose: () => void; onRemoved: (id: number) => void }) {
   const [pending, start] = React.useTransition();
+  const jobNo = useJobNo();
   if (!task) return null;
   const save = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();

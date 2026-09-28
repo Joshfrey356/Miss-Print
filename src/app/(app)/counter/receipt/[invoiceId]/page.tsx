@@ -150,7 +150,7 @@ export default async function ReceiptPage({ params, searchParams }: Props) {
         )}
         {sale.job && (
           <p className="mt-2 text-center">
-            Your order: <strong>{jobNo(sale.job.number)}</strong>
+            Your order: <strong>{jobNo(sale.job.number, brand.jobPrefix)}</strong>
             <br />
             We&apos;ll let you know when it&apos;s ready.
           </p>

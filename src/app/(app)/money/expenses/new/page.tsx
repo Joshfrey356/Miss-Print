@@ -6,6 +6,7 @@ import { can } from "@/lib/permissions";
 import { db } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
 import { jobNo, parseJobNumber, today } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 import { Card, CardBody } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { getVendorSuggestions } from "@/lib/money/expenses";
@@ -19,8 +20,9 @@ export default async function NewExpensePage({ searchParams }: { searchParams: P
   const one = (k: string) => (Array.isArray(sp[k]) ? sp[k]![0] : (sp[k] as string | undefined));
 
   // Prefill the job from ?jobId=123 or ?job=MP-10428 (when coming from a job page).
+  const prefix = await getJobPrefix(user.tenantId);
   const jobIdParam = Number(one("jobId"));
-  const jobNumParam = one("job") ? parseJobNumber(one("job")!) : null;
+  const jobNumParam = one("job") ? parseJobNumber(one("job")!, prefix) : null;
   const [job] =
     Number.isInteger(jobIdParam) && jobIdParam > 0
       ? await db.select({ number: jobs.number, title: jobs.title }).from(jobs).where(and(eq(jobs.tenantId, user.tenantId), eq(jobs.id, jobIdParam)))
@@ -35,8 +37,8 @@ export default async function NewExpensePage({ searchParams }: { searchParams: P
     <div className="mx-auto max-w-2xl">
       <PageHeader
         title="New expense"
-        subtitle={fromJob ? `For ${jobNo(job.number)} · ${job.title}` : "Snap the receipt, enter the amount, done."}
-        back={fromJob ? { href: cancelHref, label: jobNo(job.number) } : can(user.role, "money.view") ? { href: "/money?tab=expenses", label: "Expenses" } : undefined}
+        subtitle={fromJob ? `For ${jobNo(job.number, prefix)} · ${job.title}` : "Snap the receipt, enter the amount, done."}
+        back={fromJob ? { href: cancelHref, label: jobNo(job.number, prefix) } : can(user.role, "money.view") ? { href: "/money?tab=expenses", label: "Expenses" } : undefined}
       />
       {one("saved") === "1" && (
         <p className="mb-4 flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800">
@@ -51,7 +53,7 @@ export default async function NewExpensePage({ searchParams }: { searchParams: P
             backToJob={fromJob}
             cancelHref={cancelHref}
             maxDate={today(1)}
-            initial={{ vendor: "", amount: "", category: "", spentOn: today(), job: job ? jobNo(job.number) : "", paymentMethod: "Card", notes: "" }}
+            initial={{ vendor: "", amount: "", category: "", spentOn: today(), job: job ? jobNo(job.number, prefix) : "", paymentMethod: "Card", notes: "" }}
           />
         </CardBody>
       </Card>

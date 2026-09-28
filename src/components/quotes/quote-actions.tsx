@@ -10,6 +10,7 @@ import { Checkbox, Field, Input, Textarea } from "@/components/ui/input";
 import { useServerAction } from "@/components/use-action";
 import { archiveQuote, convertQuote, duplicateQuote, sendQuote, setQuoteOutcome } from "@/app/(app)/quotes/actions";
 import type { QuoteStatus } from "@/lib/db/schema";
+import { useJobNo } from "@/components/shop-context";
 
 export function QuoteActions({
   id,
@@ -30,6 +31,7 @@ export function QuoteActions({
   jobNumber: number | null;
 }) {
   const router = useRouter();
+  const jobNo = useJobNo();
   const [pending, run] = useServerAction();
   const [sending, setSending] = useState(false);
   const [declining, setDeclining] = useState(false);
@@ -47,7 +49,7 @@ export function QuoteActions({
       <div className="flex flex-wrap items-center gap-2">
         {jobNumber && (
           <LinkButton href={`/jobs/${jobNumber}`} variant="primary" size="lg">
-            Open job MP-{jobNumber} <ArrowRightCircle className="size-4" />
+            Open job {jobNo(jobNumber)} <ArrowRightCircle className="size-4" />
           </LinkButton>
         )}
         {printLink}

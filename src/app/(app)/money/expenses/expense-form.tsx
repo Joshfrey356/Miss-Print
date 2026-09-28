@@ -1,6 +1,7 @@
 "use client";
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import { useJobNo } from "@/components/shop-context";
 import { Camera, Loader2, Paperclip, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -40,6 +41,7 @@ export function ExpenseForm({
   maxDate: string;
 }) {
   const router = useRouter();
+  const jobNo = useJobNo();
   const formRef = React.useRef<HTMLFormElement>(null);
   const [pending, start] = React.useTransition();
   const [category, setCategory] = React.useState<string>(initial.category);
@@ -140,7 +142,7 @@ export function ExpenseForm({
           <Input id="exp-date" name="spentOn" type="date" defaultValue={initial.spentOn} max={maxDate} required className="h-12 text-base" />
         </Field>
         <Field label="Job number" htmlFor="exp-job" hint="Optional. Add it when this was bought for a specific job, so job costs are right.">
-          <Input id="exp-job" name="job" defaultValue={initial.job} placeholder="MP-10428" inputMode="text" autoComplete="off" maxLength={20} className="h-12 text-base uppercase placeholder:normal-case" />
+          <Input id="exp-job" name="job" defaultValue={initial.job} placeholder={jobNo(10428)} inputMode="text" autoComplete="off" maxLength={20} className="h-12 text-base uppercase placeholder:normal-case" />
         </Field>
         <Field label="Paid with">
           <div className="grid grid-cols-5 gap-1.5">

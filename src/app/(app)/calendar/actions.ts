@@ -7,6 +7,7 @@ import { requirePermission } from "@/lib/auth";
 import { bool, int, runAction, str, UserError, type ActionResult } from "@/lib/actions";
 import { logActivity } from "@/lib/activity";
 import { parseJobNumber } from "@/lib/format";
+import { getJobPrefix } from "@/lib/tenant";
 import { isYmd, shopTimeToDate } from "@/lib/calendar/types";
 
 const HM = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -41,7 +42,7 @@ export async function saveEvent(formData: FormData): Promise<ActionResult<{ id: 
     let customerId: number | null = null;
     const jobRaw = str(formData, "jobNumber");
     if (jobRaw) {
-      const n = parseJobNumber(jobRaw);
+      const n = parseJobNumber(jobRaw, await getJobPrefix(user.tenantId));
       const [j] = n ? await db
             .select({ id: jobs.id, customerId: jobs.customerId })
             .from(jobs)

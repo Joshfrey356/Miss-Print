@@ -13,7 +13,8 @@ type ReceiptSale = {
   payments: { p: { method: PaymentMethod; amountCents: number; tenderedCents: number | null; reference: string | null; voidedAt: Date | null; receivedOn: string } }[];
 };
 
-export function receiptEmail({ company, sale }: { company: Company; sale: ReceiptSale }) {
+/** `jobPrefix` is the shop's job number prefix (tenants.jobPrefix). */
+export function receiptEmail({ company, sale, jobPrefix }: { company: Company; sale: ReceiptSale; jobPrefix: string }) {
   const { inv } = sale;
   const balance = inv.status === "void" ? 0 : Math.max(0, inv.totalCents - inv.paidCents);
   const pays = sale.payments.filter((x) => !x.p.voidedAt).map((x) => x.p);
@@ -36,7 +37,7 @@ export function receiptEmail({ company, sale }: { company: Company; sale: Receip
       return out;
     }),
     balance > 0 ? row("Balance due", money(balance)) : "PAID IN FULL",
-    sale.job ? `\nYour order is ${jobNo(sale.job.number)}. We'll let you know when it's ready.` : "",
+    sale.job ? `\nYour order is ${jobNo(sale.job.number, jobPrefix)}. We'll let you know when it's ready.` : "",
     "",
     company.name,
     company.address,
