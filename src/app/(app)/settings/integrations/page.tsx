@@ -5,6 +5,8 @@ import { getSettings } from "@/lib/settings";
 import { Badge, type Tone } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { SettingsPage } from "../_components/settings-page";
+import { QuickBooksCard } from "./quickbooks-card";
+import { StripeCard } from "./stripe-card";
 
 export const metadata = { title: "Integrations" };
 
@@ -20,6 +22,10 @@ export default async function IntegrationsPage() {
       title="Integrations"
       subtitle="Other services this app works with. Connection keys are kept in the server's settings, never shown here."
     >
+      <div className="mb-6 space-y-4">
+        <QuickBooksCard tenantId={user.tenantId} />
+        <StripeCard tenantId={user.tenantId} />
+      </div>
       <div className="grid gap-4 sm:grid-cols-2">
         {items.map((i) => {
           const Icon = ICON[i.state];

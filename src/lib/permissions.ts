@@ -25,6 +25,7 @@ export const PERMISSIONS = [
   "money.view", // Money section: invoices, payments, AR
   "money.edit", // create invoices, record payments
   "money.void", // void invoices/payments
+  "counter.use", // front counter: ring up walk-in sales and take payments
   "expenses.edit",
   "reports.basic",
   "reports.financial",
@@ -57,6 +58,7 @@ const ROLE_PERMISSIONS: Record<Role, Set<Permission>> = {
     "calendar.edit",
     "expenses.edit",
     "reports.basic",
+    "counter.use",
   ]),
   sales: new Set<Permission>([
     "financials.view",
@@ -74,6 +76,7 @@ const ROLE_PERMISSIONS: Record<Role, Set<Permission>> = {
     "tasks.use",
     "calendar.view",
     "calendar.edit",
+    "counter.use",
   ]),
   designer: new Set<Permission>([
     "customers.view",
@@ -103,6 +106,7 @@ const ROLE_PERMISSIONS: Record<Role, Set<Permission>> = {
     "expenses.edit",
     "reports.basic",
     "reports.financial",
+    "counter.use",
   ]),
 };
 

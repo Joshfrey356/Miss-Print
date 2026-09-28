@@ -9,7 +9,10 @@
  * Pure & deterministic — safe on client (live quote preview) and server (saved values).
  */
 
-export type PricingMethod = "per_sqft" | "quantity_tier" | "per_unit" | "custom";
+import { estimatePrint, type PressOption, type PrintCatalog, type PrintConfig, type PrintProduction, type PrintSpec } from "./print";
+
+/** sheet_fed = full print estimating (paper, press, bindery) by src/lib/pricing/print.ts. */
+export type PricingMethod = "per_sqft" | "quantity_tier" | "per_unit" | "sheet_fed" | "custom";
 
 export type FinishingOption = {
   key: string; // "grommets"
@@ -53,6 +56,8 @@ export type PricingConfig = {
   targetMarginPct?: number;
   /** Rush surcharge for this category (falls back to company rush %). */
   rushPct?: number;
+  /** sheet_fed: papers, presses and default services for this category. */
+  print?: PrintConfig;
 };
 
 /** Company-wide business rules (Settings → Business Rules). */
@@ -99,6 +104,8 @@ export type PricingInput = {
   discountPct?: number | null;
   /** Manual base price for "custom" categories. */
   customBaseCents?: number | null;
+  /** sheet_fed: paper, press, sides/pages, colors, bleed and services. Size & quantity come from above. */
+  print?: Omit<PrintSpec, "quantity" | "finishedWidthIn" | "finishedHeightIn"> | null;
 };
 
 export type BreakdownLine = { label: string; cents: number; detail?: string };
@@ -115,6 +122,10 @@ export type PricingResult = {
   costLines: BreakdownLine[];
   warnings: string[];
   sqftTotal: number;
+  /** sheet_fed: how the job runs (press, sheets, layout) — for the job ticket. */
+  production?: PrintProduction | null;
+  /** sheet_fed: every press that can run it, cheapest first. */
+  pressOptions?: PressOption[];
 };
 
 const round = (n: number) => Math.round(n);
@@ -144,7 +155,13 @@ export function tierPrice(tiers: QuantityTier[], qty: number): { priceCents: num
   };
 }
 
-export function calculatePrice(config: PricingConfig, input: PricingInput, rules: BusinessRules = DEFAULT_BUSINESS_RULES): PricingResult {
+export function calculatePrice(
+  config: PricingConfig,
+  input: PricingInput,
+  rules: BusinessRules = DEFAULT_BUSINESS_RULES,
+  /** Paper, presses and services — needed for sheet_fed categories. */
+  catalog?: PrintCatalog,
+): PricingResult {
   const lines: BreakdownLine[] = [];
   const costLines: BreakdownLine[] = [];
   const warnings: string[] = [];
@@ -154,6 +171,8 @@ export function calculatePrice(config: PricingConfig, input: PricingInput, rules
   const sqftEach = w > 0 && h > 0 ? (w * h) / 144 : 0;
   const sqftTotal = sqftEach * qty;
   const waste = config.wastePct ?? 0;
+  let production: PrintProduction | null = null;
+  let pressOptions: PressOption[] | undefined;
 
   if (qty <= 0) warnings.push("Enter a quantity.");
 
@@ -198,6 +217,35 @@ export function calculatePrice(config: PricingConfig, input: PricingInput, rules
       lines.push({ label: "Units", cents: unit * qty, detail: `${qty} × ${$(unit)}` });
       const unitCost = input.materialCostCents ?? config.unitCostCents ?? 0;
       if (unitCost) costLines.push({ label: "Material", cents: round(unitCost * qty * (1 + waste)), detail: `${qty} × ${$(unitCost)}` });
+      break;
+    }
+    case "sheet_fed": {
+      if (!catalog) {
+        warnings.push("Print estimating isn't available here.");
+        break;
+      }
+      const pc = config.print ?? {};
+      const est = estimatePrint(
+        {
+          quantity: qty,
+          finishedWidthIn: w,
+          finishedHeightIn: h,
+          pages: input.print?.pages ?? pc.defaultPages ?? 1,
+          colorsFront: input.print?.colorsFront ?? pc.defaultColorsFront ?? 4,
+          colorsBack: input.print?.colorsBack ?? pc.defaultColorsBack ?? 0,
+          bleed: input.print?.bleed ?? false,
+          paperId: input.print?.paperId ?? null,
+          pressId: input.print?.pressId ?? null,
+          operationIds: input.print?.operationIds ?? [],
+        },
+        catalog,
+        pc,
+      );
+      lines.push(...est.lines);
+      costLines.push(...est.costLines);
+      warnings.push(...est.warnings);
+      production = est.production;
+      pressOptions = est.options;
       break;
     }
     case "custom": {
@@ -291,6 +339,7 @@ export function calculatePrice(config: PricingConfig, input: PricingInput, rules
     costLines,
     warnings,
     sqftTotal,
+    ...(config.method === "sheet_fed" ? { production, pressOptions } : {}),
   };
 }
 

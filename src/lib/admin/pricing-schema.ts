@@ -7,7 +7,7 @@ const pct = (max: number) => z.number().min(0).max(max);
 const hours = z.number().min(0).max(1000);
 
 export const pricingConfigSchema = z.object({
-  method: z.enum(["per_sqft", "quantity_tier", "per_unit", "custom"]),
+  method: z.enum(["per_sqft", "quantity_tier", "per_unit", "sheet_fed", "custom"]),
   setupCents: cents.optional(),
   pricePerSqftCents: cents.optional(),
   materialCostPerSqftCents: cents.optional(),
@@ -38,12 +38,27 @@ export const pricingConfigSchema = z.object({
   minimumCents: cents.optional(),
   targetMarginPct: pct(0.95).optional(),
   rushPct: pct(3).optional(),
+  print: z
+    .object({
+      paperIds: z.array(z.number().int().positive()).max(500).optional(),
+      defaultPaperId: z.number().int().positive().optional(),
+      pressIds: z.array(z.number().int().positive()).max(100).optional(),
+      defaultOperationIds: z.array(z.number().int().positive()).max(100).optional(),
+      defaultPages: z.number().int().min(1).max(1000).optional(),
+      defaultColorsFront: z.number().int().min(0).max(8).optional(),
+      defaultColorsBack: z.number().int().min(0).max(8).optional(),
+      bleedIn: z.number().min(0).max(2).optional(),
+      gutterIn: z.number().min(0).max(5).optional(),
+      paperMarkupPct: pct(10).optional(),
+    })
+    .optional(),
 });
 
 const METHOD_FIELDS: Record<PricingMethod, (keyof PricingConfig)[]> = {
   per_sqft: ["pricePerSqftCents", "materialCostPerSqftCents", "materialMarkupPct"],
   quantity_tier: ["tiers"],
   per_unit: ["unitPriceCents", "unitCostCents"],
+  sheet_fed: ["print"],
   custom: [],
 };
 const ALL_METHOD_FIELDS = new Set(Object.values(METHOD_FIELDS).flat());

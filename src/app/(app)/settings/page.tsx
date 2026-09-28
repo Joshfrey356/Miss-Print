@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Building2, ChevronRight, Mail, MapPin, Plug, Scale, SlidersHorizontal, Tags, UserCog } from "lucide-react";
+import { Building2, ChevronRight, FileUp, Layers, Mail, MapPin, Plug, Printer, Scale, Scissors, SlidersHorizontal, Tags, UserCog } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { requirePagePermission } from "@/lib/auth";
 import { getSettings } from "@/lib/settings";
@@ -21,6 +21,30 @@ const CARDS: { href: string; title: string; text: string; icon: LucideIcon }[] =
     icon: Tags,
   },
   {
+    href: "/settings/paper",
+    title: "Paper & Stock",
+    text: "Paper stocks with sheet sizes and cost per 1,000, used to estimate printed work.",
+    icon: Layers,
+  },
+  {
+    href: "/settings/equipment",
+    title: "Presses & Equipment",
+    text: "Digital presses (click charges), offset presses (plates, make-ready, run speed) and bindery machines.",
+    icon: Printer,
+  },
+  {
+    href: "/settings/services",
+    title: "Bindery & Services",
+    text: "Cutting, folding, stapling, drilling, padding, laminating, file prep — priced per job, piece, 1,000, sheet or hour.",
+    icon: Scissors,
+  },
+  {
+    href: "/settings/import",
+    title: "Import Data",
+    text: "Bring in customers, contacts, past jobs, paper and vendors from Printer's Plan or a spreadsheet (CSV or Excel).",
+    icon: FileUp,
+  },
+  {
     href: "/settings/team",
     title: "Team & Permissions",
     text: "Add people, reset passwords, and see what each role is allowed to see.",
@@ -39,7 +63,7 @@ const CARDS: { href: string; title: string; text: string; icon: LucideIcon }[] =
     text: "Reminders and follow-ups for quotes, proofs and invoices. Coming in Phase 2 — nothing is sent automatically yet.",
     icon: Mail,
   },
-  { href: "/settings/integrations", title: "Integrations", text: "Email, file storage, QuickBooks, text messages, payments and more.", icon: Plug },
+  { href: "/settings/integrations", title: "Integrations", text: "QuickBooks, card payments (Stripe), email, file storage and more.", icon: Plug },
 ];
 
 export default async function SettingsPage() {

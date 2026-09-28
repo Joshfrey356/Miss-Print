@@ -35,6 +35,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (can(r, "customers.view")) allowed.push("customers");
   if (can(r, "calendar.view")) allowed.push("calendar");
   if (can(r, "messages.use")) allowed.push("messages");
+  if (can(r, "counter.use")) allowed.push("counter");
   if (can(r, "money.view")) allowed.push("money");
   if (can(r, "reports.basic")) allowed.push("reports");
   const newOptions = {

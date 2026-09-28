@@ -76,7 +76,7 @@ export const quoteStatusEnum = pgEnum("quote_status", [
   "expired",
   "converted",
 ]);
-export const pricingMethodEnum = pgEnum("pricing_method", ["per_sqft", "quantity_tier", "per_unit", "custom"]);
+export const pricingMethodEnum = pgEnum("pricing_method", ["per_sqft", "quantity_tier", "per_unit", "sheet_fed", "custom"]);
 export const fileFolderEnum = pgEnum("file_folder", [
   "customer",
   "original_artwork",
@@ -261,6 +261,27 @@ export const companySettings = pgTable(
   (t) => [primaryKey({ name: "company_settings_pkey", columns: [t.tenantId, t.key] }), ref("company_settings_updated_by_fk", t.tenantId, t.updatedBy, users)],
 );
 
+/**
+ * One data import (e.g. customers exported from Printer's Plan). Imported rows carry its id,
+ * so a mistaken import can be undone (its rows are archived, never deleted).
+ */
+export const imports = pgTable(
+  "imports",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: tenantId(),
+    kind: text("kind").$type<"customers" | "contacts" | "jobs" | "materials" | "vendors">().notNull(),
+    filename: text("filename").notNull(),
+    /** { created, updated, skipped, errors: [{ row, message }] } */
+    summary: jsonb("summary").$type<{ created: number; updated: number; skipped: number; errors: { row: number; message: string }[] }>().notNull(),
+    createdBy: integer("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    undoneAt: timestamp("undone_at", { withTimezone: true }),
+    undoneBy: integer("undone_by"),
+  },
+  (t) => [tenantKey("imports", t), ref("imports_created_by_fk", t.tenantId, t.createdBy, users), ref("imports_undone_by_fk", t.tenantId, t.undoneBy, users)],
+);
+
 // ---------------------------------------------------------------------------
 // Customers
 // ---------------------------------------------------------------------------
@@ -288,7 +309,9 @@ export const customers = pgTable(
     salespersonId: integer("salesperson_id"),
     notes: text("notes"),
     customerSince: date("customer_since"),
-    externalId: text("external_id"), // QuickBooks customer id, later
+    externalId: text("external_id"), // QuickBooks customer id
+    /** Set when the customer came from a data import (Settings → Import). */
+    importId: integer("import_id"),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -296,6 +319,7 @@ export const customers = pgTable(
   (t) => [
     tenantKey("customers", t),
     ref("customers_salesperson_fk", t.tenantId, t.salespersonId, users),
+    ref("customers_import_fk", t.tenantId, t.importId, imports),
     index("customers_name_trgm").using("gin", sql`${t.name} gin_trgm_ops`),
     index("customers_phone_idx").on(t.tenantId, t.phone),
   ],
@@ -313,10 +337,12 @@ export const customerContacts = pgTable(
     phone: text("phone"),
     isPrimary: boolean("is_primary").notNull().default(false),
     notes: text("notes"),
+    importId: integer("import_id"),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
   },
   (t) => [
     tenantKey("customer_contacts", t),
+    ref("contacts_import_fk", t.tenantId, t.importId, imports),
     ref("contacts_customer_fk", t.tenantId, t.customerId, customers),
     index("contacts_customer_idx").on(t.customerId),
     index("contacts_name_trgm").using("gin", sql`${t.name} gin_trgm_ops`),
@@ -383,28 +409,123 @@ export const vendors = pgTable(
     website: text("website"),
     accountNumber: text("account_number"),
     notes: text("notes"),
+    importId: integer("import_id"),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
   },
-  (t) => [tenantKey("vendors", t)],
+  (t) => [tenantKey("vendors", t), ref("vendors_import_fk", t.tenantId, t.importId, imports)],
 );
 
-/** Materials/substrates. Used by pricing now; inventory fields are for Phase 2. */
+/**
+ * Materials/substrates and PAPER STOCKS. A paper stock is a material with unit "sheet", a sheet
+ * size and a cost per 1,000 sheets; the print estimator (src/lib/pricing/print.ts) uses those.
+ * Inventory fields are for Phase 2.
+ */
 export const materials = pgTable(
   "materials",
   {
     id: serial("id").primaryKey(),
     tenantId: tenantId(),
-    name: text("name").notNull(), // "13oz Scrim Vinyl Banner"
+    name: text("name").notNull(), // "13oz Scrim Vinyl Banner", "100# Gloss Text 12x18"
     kind: text("kind").notNull().default("other"), // vinyl, paper, substrate, laminate, ink…
     unit: text("unit").notNull().default("sqft"), // sqft | sheet | roll | each | ream
     costCents: integer("cost_cents").notNull().default(0), // our cost per unit
     vendorId: integer("vendor_id"),
     sku: text("sku"),
+    /** Paper stocks: sheet size as bought (a parent sheet may be cut down to fit the press). */
+    sheetWidthIn: numeric("sheet_width_in", { precision: 8, scale: 3, mode: "number" }),
+    sheetHeightIn: numeric("sheet_height_in", { precision: 8, scale: 3, mode: "number" }),
+    /** Paper stocks: "100# Text", "14pt Cover"… */
+    weight: text("weight"),
+    /** Paper stocks: our cost per 1,000 sheets (paper is priced per M). */
+    costPerMCents: integer("cost_per_m_cents"),
+    /** Paper stocks: extra charged on top of cost (0.3 = +30%). Null = the shop's default paper markup. */
+    markupPct: numeric("markup_pct", { precision: 6, scale: 4, mode: "number" }),
     quantityOnHand: numeric("quantity_on_hand", { precision: 12, scale: 2, mode: "number" }),
     reorderLevel: numeric("reorder_level", { precision: 12, scale: 2, mode: "number" }),
+    importId: integer("import_id"),
     active: boolean("active").notNull().default(true),
   },
-  (t) => [tenantKey("materials", t), ref("materials_vendor_fk", t.tenantId, t.vendorId, vendors)],
+  (t) => [tenantKey("materials", t), ref("materials_vendor_fk", t.tenantId, t.vendorId, vendors), ref("materials_import_fk", t.tenantId, t.importId, imports)],
+);
+
+/**
+ * Presses and machines used by the print estimator: digital presses (click charges), offset presses
+ * (plates, make-ready, run speed) and bindery equipment. Rates below a cent (clicks) are stored as
+ * numeric cents with 4 decimals; every computed amount is rounded to whole cents.
+ */
+export const equipment = pgTable(
+  "equipment",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: tenantId(),
+    name: text("name").notNull(), // "Konica C4080", "Heidelberg GTO 52"
+    kind: text("kind").$type<"digital" | "offset" | "wide_format" | "cutter" | "folder" | "bindery" | "other">().notNull(),
+    locationId: integer("location_id"),
+    /** Largest / smallest sheet the machine takes (press sheets). */
+    maxSheetWidthIn: numeric("max_sheet_width_in", { precision: 8, scale: 3, mode: "number" }),
+    maxSheetHeightIn: numeric("max_sheet_height_in", { precision: 8, scale: 3, mode: "number" }),
+    minSheetWidthIn: numeric("min_sheet_width_in", { precision: 8, scale: 3, mode: "number" }),
+    minSheetHeightIn: numeric("min_sheet_height_in", { precision: 8, scale: 3, mode: "number" }),
+    /** Unprintable edge (gripper) on each side, inches. */
+    gripperIn: numeric("gripper_in", { precision: 6, scale: 3, mode: "number" }).notNull().default(0.25),
+    /** Most ink colors per side (4 = CMYK). */
+    maxColors: integer("max_colors").notNull().default(4),
+    /** Prints both sides in one pass. */
+    perfecting: boolean("perfecting").notNull().default(false),
+    /** Digital: charge and cost per printed side of one press sheet. */
+    colorClickPriceCents: numeric("color_click_price_cents", { precision: 10, scale: 4, mode: "number" }),
+    colorClickCostCents: numeric("color_click_cost_cents", { precision: 10, scale: 4, mode: "number" }),
+    bwClickPriceCents: numeric("bw_click_price_cents", { precision: 10, scale: 4, mode: "number" }),
+    bwClickCostCents: numeric("bw_click_cost_cents", { precision: 10, scale: 4, mode: "number" }),
+    /** Offset: per plate (one per color per side). */
+    platePriceCents: integer("plate_price_cents"),
+    plateCostCents: integer("plate_cost_cents"),
+    /** Offset: ink per 1,000 impressions per color. */
+    inkCostPerMCents: integer("ink_cost_per_m_cents"),
+    /** Setup / make-ready time per job (offset: per color), minutes. */
+    setupMinutes: integer("setup_minutes").notNull().default(0),
+    /** Run speed, sheets per hour. */
+    sheetsPerHour: integer("sheets_per_hour"),
+    /** Machine time: what we charge and what it costs us per hour. */
+    hourlyPriceCents: integer("hourly_price_cents"),
+    hourlyCostCents: integer("hourly_cost_cents"),
+    /** Spoilage: sheets wasted in setup, plus a share of the run. */
+    setupSpoilageSheets: integer("setup_spoilage_sheets").notNull().default(0),
+    runSpoilagePct: numeric("run_spoilage_pct", { precision: 6, scale: 4, mode: "number" }).notNull().default(0),
+    notes: text("notes"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    active: boolean("active").notNull().default(true),
+  },
+  (t) => [tenantKey("equipment", t), ref("equipment_location_fk", t.tenantId, t.locationId, locations)],
+);
+
+/**
+ * Bindery, finishing and pre-press services priced by the estimator: cutting, folding, stapling,
+ * drilling, padding, laminating, file prep… Each is charged per job, per piece, per 1,000, per press
+ * sheet or by the hour.
+ */
+export const operations = pgTable(
+  "operations",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: tenantId(),
+    name: text("name").notNull(),
+    category: text("category").$type<"prepress" | "bindery" | "finishing" | "packaging" | "shipping" | "other">().notNull().default("bindery"),
+    basis: text("basis").$type<"per_job" | "per_piece" | "per_1000" | "per_sheet" | "per_hour">().notNull(),
+    /** One-time charge / cost per job. */
+    setupPriceCents: integer("setup_price_cents").notNull().default(0),
+    setupCostCents: integer("setup_cost_cents").notNull().default(0),
+    /** Per unit of the basis (per piece, per 1,000, per sheet, per hour). */
+    ratePriceCents: numeric("rate_price_cents", { precision: 12, scale: 4, mode: "number" }).notNull().default(0),
+    rateCostCents: numeric("rate_cost_cents", { precision: 12, scale: 4, mode: "number" }).notNull().default(0),
+    /** per_hour: how many pieces an hour, to work out the time. */
+    piecesPerHour: integer("pieces_per_hour"),
+    minimumCents: integer("minimum_cents").notNull().default(0),
+    equipmentId: integer("equipment_id"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    active: boolean("active").notNull().default(true),
+  },
+  (t) => [tenantKey("operations", t), ref("operations_equipment_fk", t.tenantId, t.equipmentId, equipment)],
 );
 
 // ---------------------------------------------------------------------------
@@ -537,6 +658,9 @@ export const jobs = pgTable(
     internalNotes: text("internal_notes"),
     customerNotes: text("customer_notes"),
     boardOrder: integer("board_order").notNull().default(0),
+    /** Job number from the previous system (e.g. Printer's Plan) for imported history. */
+    legacyNumber: text("legacy_number"),
+    importId: integer("import_id"),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     createdBy: integer("created_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -557,6 +681,7 @@ export const jobs = pgTable(
     ref("jobs_production_fk", t.tenantId, t.productionId, users),
     ref("jobs_installer_fk", t.tenantId, t.installerId, users),
     ref("jobs_created_by_fk", t.tenantId, t.createdBy, users),
+    ref("jobs_import_fk", t.tenantId, t.importId, imports),
     index("jobs_customer_idx").on(t.customerId),
     index("jobs_status_idx").on(t.tenantId, t.status),
     index("jobs_due_idx").on(t.tenantId, t.dueDate),
@@ -581,6 +706,8 @@ export const jobItems = pgTable(
     colors: text("colors"),
     specs: text("specs"),
     pricingInput: jsonb("pricing_input"),
+    /** Price breakdown and, for printed work, how it runs (press, paper, sheets) — copied from the quote. */
+    pricingBreakdown: jsonb("pricing_breakdown"),
     recommendedCents: integer("recommended_cents").notNull().default(0),
     priceCents: integer("price_cents").notNull().default(0),
     overrideReason: text("override_reason"),
@@ -902,7 +1029,9 @@ export const invoices = pgTable(
     lastReminderAt: timestamp("last_reminder_at", { withTimezone: true }),
     voidedAt: timestamp("voided_at", { withTimezone: true }),
     voidReason: text("void_reason"),
-    externalId: text("external_id"), // QuickBooks invoice id, later
+    externalId: text("external_id"), // QuickBooks invoice id
+    /** "job" (from a job) or "counter" (a front-counter sale). */
+    source: text("source").$type<"job" | "counter">().notNull().default("job"),
     createdBy: integer("created_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -944,18 +1073,123 @@ export const payments = pgTable(
     reference: text("reference"), // check #, last 4…
     receivedOn: date("received_on").notNull(),
     notes: text("notes"),
-    externalId: text("external_id"),
+    externalId: text("external_id"), // QuickBooks payment id
+    /** Online card payments: the processor's id (e.g. Stripe Checkout session), so a payment is recorded once. */
+    processorRef: text("processor_ref"),
+    /** Cash at the counter: what the customer handed over (change = tendered − amount). */
+    tenderedCents: integer("tendered_cents"),
     recordedBy: integer("recorded_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     voidedAt: timestamp("voided_at", { withTimezone: true }),
   },
   (t) => [
     tenantKey("payments", t),
+    uniqueIndex("payments_processor_ref_idx").on(t.tenantId, t.processorRef),
     ref("payments_invoice_fk", t.tenantId, t.invoiceId, invoices),
     ref("payments_customer_fk", t.tenantId, t.customerId, customers),
     ref("payments_recorded_by_fk", t.tenantId, t.recordedBy, users),
     index("payments_invoice_idx").on(t.invoiceId),
     index("payments_received_idx").on(t.tenantId, t.receivedOn),
+  ],
+);
+
+/** "Pay online" links for an invoice (card payments through the shop's Stripe account). */
+export const paymentLinks = pgTable(
+  "payment_links",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: tenantId(),
+    invoiceId: integer("invoice_id").notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    provider: text("provider").$type<"stripe">().notNull().default("stripe"),
+    /** Stripe Checkout session id. */
+    providerRef: text("provider_ref").notNull(),
+    url: text("url").notNull(),
+    status: text("status").$type<"open" | "paid" | "expired">().notNull().default("open"),
+    paymentId: integer("payment_id"),
+    createdBy: integer("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+  },
+  (t) => [
+    tenantKey("payment_links", t),
+    ref("payment_links_invoice_fk", t.tenantId, t.invoiceId, invoices),
+    ref("payment_links_payment_fk", t.tenantId, t.paymentId, payments),
+    ref("payment_links_created_by_fk", t.tenantId, t.createdBy, users),
+    uniqueIndex("payment_links_provider_ref_idx").on(t.provider, t.providerRef),
+    index("payment_links_invoice_idx").on(t.invoiceId),
+  ],
+);
+
+/** End-of-day cash drawer count at the front counter. */
+export const registerCloses = pgTable(
+  "register_closes",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: tenantId(),
+    locationId: integer("location_id"),
+    businessDate: date("business_date").notNull(),
+    expectedCashCents: integer("expected_cash_cents").notNull(),
+    countedCashCents: integer("counted_cash_cents").notNull(),
+    /** Totals by payment method for the day, e.g. { cash: 12000, card: 54000 } */
+    totals: jsonb("totals").$type<Record<string, number>>().notNull(),
+    notes: text("notes"),
+    closedBy: integer("closed_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    tenantKey("register_closes", t),
+    ref("register_closes_location_fk", t.tenantId, t.locationId, locations),
+    ref("register_closes_closed_by_fk", t.tenantId, t.closedBy, users),
+    index("register_closes_date_idx").on(t.tenantId, t.businessDate),
+  ],
+);
+
+/**
+ * A shop's connection to an outside service (Stripe payments, QuickBooks Online).
+ * `secret` holds tokens/keys encrypted with APP_SECRET_KEY (src/lib/secrets.ts) — never plain text.
+ */
+export const tenantIntegrations = pgTable(
+  "tenant_integrations",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: tenantId(),
+    provider: text("provider").$type<"stripe" | "quickbooks">().notNull(),
+    /** Non-secret details shown in Settings: account name, QuickBooks company id (realmId)… */
+    config: jsonb("config").$type<Record<string, unknown>>().notNull().default({}),
+    secret: text("secret"),
+    status: text("status").$type<"connected" | "error" | "disconnected">().notNull().default("connected"),
+    lastError: text("last_error"),
+    connectedBy: integer("connected_by"),
+    connectedAt: timestamp("connected_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    tenantKey("tenant_integrations", t),
+    uniqueIndex("tenant_integrations_provider_idx").on(t.tenantId, t.provider),
+    ref("tenant_integrations_connected_by_fk", t.tenantId, t.connectedBy, users),
+  ],
+);
+
+/** What has been sent to the accounting system (QuickBooks), per record. */
+export const accountingSync = pgTable(
+  "accounting_sync",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: tenantId(),
+    entityType: text("entity_type").$type<"customer" | "invoice" | "payment">().notNull(),
+    entityId: integer("entity_id").notNull(),
+    externalId: text("external_id"),
+    /** QuickBooks SyncToken, needed to update a record. */
+    syncToken: text("sync_token"),
+    syncedAt: timestamp("synced_at", { withTimezone: true }),
+    error: text("error"),
+    attempts: integer("attempts").notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    tenantKey("accounting_sync", t),
+    uniqueIndex("accounting_sync_entity_idx").on(t.tenantId, t.entityType, t.entityId),
   ],
 );
 
@@ -1029,3 +1263,6 @@ export type JobItem = typeof jobItems.$inferSelect;
 export type Quote = typeof quotes.$inferSelect;
 export type QuoteItem = typeof quoteItems.$inferSelect;
 export type Invoice = typeof invoices.$inferSelect;
+export type Material = typeof materials.$inferSelect;
+export type Equipment = typeof equipment.$inferSelect;
+export type Operation = typeof operations.$inferSelect;

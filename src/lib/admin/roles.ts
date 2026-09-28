@@ -42,6 +42,7 @@ export const PERMISSION_INFO: { group: string; items: { key: Permission; label: 
       { key: "money.view", label: "See invoices, payments and balances" },
       { key: "money.edit", label: "Create invoices and record payments" },
       { key: "money.void", label: "Void invoices and payments" },
+      { key: "counter.use", label: "Ring up counter sales and take payments" },
       { key: "expenses.edit", label: "Enter expenses" },
     ],
   },

@@ -5,6 +5,7 @@ export const PRICING_METHOD_LABELS: Record<PricingMethod, string> = {
   per_sqft: "By square foot",
   quantity_tier: "By quantity tiers",
   per_unit: "Per piece",
+  sheet_fed: "Print estimating (paper + press)",
   custom: "Custom / manual",
 };
 
@@ -12,6 +13,7 @@ export const PRICING_METHOD_HINTS: Record<PricingMethod, string> = {
   per_sqft: "Banners, signs, wraps: width × height × a price per square foot.",
   quantity_tier: "Business cards, flyers: one price for 250, another for 500, and so on.",
   per_unit: "Yard signs, banner stands: a set price for each piece.",
+  sheet_fed: "Cards, flyers, brochures, booklets: priced from the paper, press (clicks or plates & run time) and bindery, like Printer's Plan.",
   custom: "Every job is different. Someone enters the price by hand.",
 };
 
