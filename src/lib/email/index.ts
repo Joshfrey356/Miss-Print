@@ -44,8 +44,11 @@ function withName(from: string, name?: string) {
   return `${name.replace(/["<>\r\n]/g, "").trim()} <${address}>`;
 }
 
+/** Is real email sending set up? (Otherwise emails only go to the server log.) */
+export const emailSendingEnabled = () => process.env.EMAIL_PROVIDER === "resend" && Boolean(process.env.RESEND_API_KEY);
+
 export function emailProvider(): EmailProvider {
   const from = process.env.EMAIL_FROM ?? "Command Center <orders@missprintusa.com>";
-  if (process.env.EMAIL_PROVIDER === "resend" && process.env.RESEND_API_KEY) return new ResendEmail(process.env.RESEND_API_KEY, from);
+  if (emailSendingEnabled()) return new ResendEmail(process.env.RESEND_API_KEY!, from);
   return new ConsoleEmail();
 }

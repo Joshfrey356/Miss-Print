@@ -52,9 +52,10 @@ login_attempts (rate limiting)
 |---|---|---|
 | `tenants` | One row per print shop using the app. White-label brand and per-shop number counters. | `slug` (for `/login?shop=`), `name` (brand name), `logo_storage_key`/`logo_mime_type` (served at `/brand/<id>/logo`), `next_job_number`, `next_quote_number`, `next_invoice_number`, `archived_at` (suspends the shop) |
 | `locations` | A shop's places, e.g. Munster (customer-facing), Hammond (production), Off-site (installs). `code` is unique per shop. | `code`, `name`, `role`, `address`, `is_customer_facing` |
-| `users` | Employees of one shop. One role each. **Email is unique across all shops** (it decides which shop you sign in to); `handle` is unique per shop. | `role` (owner, manager, sales, designer, production, installer, accounting), `handle` (used for @mentions), `password_hash` (bcrypt), `notification_prefs` (jsonb), `active` |
+| `users` | Employees of one shop. One role each. `invited_at` marks a pending invite until their first sign-in. **Email is unique across all shops** (it decides which shop you sign in to); `handle` is unique per shop. | `role` (owner, manager, sales, designer, production, installer, accounting), `handle` (used for @mentions), `password_hash` (bcrypt), `notification_prefs` (jsonb), `active` |
 | `sessions` | Signed-in devices. **Only a SHA-256 hash of the token is stored.** | `id` (hash), `user_id`, `expires_at`, `ip`, `user_agent` |
-| `login_attempts` | Rate limiting for sign-in (per email and per IP) | `key`, `success`, `created_at` |
+| `account_tokens` | One-time emailed links: `invite` (new person chooses a password, 7 days) and `reset` (forgot password, 2 hours). **Only a SHA-256 hash of the token is stored.** | `id` (hash), `user_id`, `purpose`, `expires_at`, `used_at` |
+| `login_attempts` | Rate limiting for sign-in, password resets and sign-ups (per email and per IP) | `key`, `success`, `created_at` |
 | `company_settings` | Per-shop key/value company profile and **business rules**. Primary key `(tenant_id, key)`. | `key` = `business_rules` \| `company` \| `automations` \| `quote_valid_days` |
 
 Permissions are defined in code (`src/lib/permissions.ts`), not in tables. Seven fixed roles are easier to reason about than a permission editor. If a shop later needs custom roles, add `roles` and `role_permissions` tables.

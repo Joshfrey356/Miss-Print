@@ -190,6 +190,8 @@ export const users = pgTable(
     /** { mentions: true, assigned: true, proofs: true, quotes: true, dueSoon: true, invoices: true } */
     notificationPrefs: jsonb("notification_prefs").$type<Record<string, boolean>>().notNull().default({}),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+    /** When the last invite email went out. Pending until they first sign in (lastLoginAt). */
+    invitedAt: timestamp("invited_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -214,6 +216,25 @@ export const sessions = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("sessions_user_idx").on(t.userId)],
+);
+
+/**
+ * One-time links emailed to people: "invite" (choose your password) and "reset" (forgot password).
+ * Like sessions, only a SHA-256 hash of the token is stored, and it's scoped through its user.
+ */
+export const accountTokens = pgTable(
+  "account_tokens",
+  {
+    id: text("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    purpose: text("purpose").$type<"invite" | "reset">().notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("account_tokens_user_idx").on(t.userId)],
 );
 
 export const loginAttempts = pgTable(

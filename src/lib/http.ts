@@ -1,4 +1,5 @@
 import "server-only";
+import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 
 /**
@@ -17,3 +18,16 @@ export function sameOrigin(req: Request): boolean {
 }
 
 export const forbidden = (msg = "Forbidden") => NextResponse.json({ error: msg }, { status: 403 });
+
+/**
+ * Public base URL for links in emails (proofs, invites, password resets).
+ * APP_URL when set; otherwise the Vercel production domain; otherwise the current request's host.
+ */
+export async function appUrl() {
+  const configured = process.env.APP_URL?.trim().replace(/\/+$/, "");
+  if (configured) return configured;
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  const h = await headers();
+  const host = h.get("x-forwarded-host") ?? h.get("host");
+  return host ? `${h.get("x-forwarded-proto") ?? "https"}://${host}` : "http://localhost:3000";
+}

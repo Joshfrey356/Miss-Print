@@ -33,6 +33,7 @@ export default async function TeamPage() {
         locationId: users.locationId,
         location: locations.name,
         lastLoginAt: users.lastLoginAt,
+        invitedAt: users.invitedAt,
       })
       .from(users)
       .leftJoin(locations, eq(locations.id, users.locationId))
@@ -85,7 +86,9 @@ export default async function TeamPage() {
                 <Td className="whitespace-nowrap">{ROLE_LABELS[u.role]}</Td>
                 <Td className="hidden md:table-cell">{u.email}</Td>
                 <Td className="hidden lg:table-cell">{u.location ?? "—"}</Td>
-                <Td className="hidden whitespace-nowrap sm:table-cell">{u.lastLoginAt ? timeAgo(u.lastLoginAt) : "Never"}</Td>
+                <Td className="hidden whitespace-nowrap sm:table-cell">
+                  {u.lastLoginAt ? timeAgo(u.lastLoginAt) : u.invitedAt && u.active ? <Badge tone="amber">Invited {timeAgo(u.invitedAt)}</Badge> : "Never"}
+                </Td>
                 <Td className="text-right">
                   <UserActions
                     user={{
@@ -98,6 +101,7 @@ export default async function TeamPage() {
                       phone: u.phone,
                       locationId: u.locationId,
                       active: u.active,
+                      signedIn: Boolean(u.lastLoginAt),
                     }}
                     isMe={u.id === me.id}
                     locations={locOptions}

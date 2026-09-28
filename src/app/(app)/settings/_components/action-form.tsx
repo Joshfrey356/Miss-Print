@@ -4,7 +4,8 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button, type ButtonProps } from "@/components/ui/button";
 
-type Result = { ok: true; message?: string } | { ok: false; error: string } | null;
+type Success = { ok: true; message?: string; data?: unknown };
+type Result = Success | { ok: false; error: string } | null;
 
 const Pending = React.createContext(false);
 
@@ -25,7 +26,7 @@ export function ActionForm({
   children: React.ReactNode;
   className?: string;
   successMessage?: string;
-  onSuccess?: () => void;
+  onSuccess?: (r: Success) => void;
   resetOnSuccess?: boolean;
 }) {
   const [pending, start] = React.useTransition();
@@ -44,7 +45,7 @@ export function ActionForm({
             setError(null);
             toast.success(r.message ?? successMessage);
             if (resetOnSuccess) form.reset();
-            onSuccess?.();
+            onSuccess?.(r);
           } else setError(r.error);
         });
       }}

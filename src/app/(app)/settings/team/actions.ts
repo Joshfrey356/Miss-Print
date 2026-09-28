@@ -2,7 +2,9 @@
 import { revalidatePath } from "next/cache";
 import { and, count, eq, ne, sql } from "drizzle-orm";
 import { z } from "zod";
+import { randomBytes } from "node:crypto";
 import { hashPassword, requirePermission } from "@/lib/auth";
+import { sendAccountLink, type SentLink } from "@/lib/auth/account-links";
 import { runAction, str, UserError, type ActionResult } from "@/lib/actions";
 import { db } from "@/lib/db";
 import { locations, roleEnum, sessions, users } from "@/lib/db/schema";
@@ -72,16 +74,22 @@ function readPassword(fd: FormData) {
   return pw;
 }
 
-export async function createUser(_prev: Prev, fd: FormData): Promise<ActionResult> {
-  return runAction(async () => {
+/**
+ * Add a person. By default they get an invite email with a link to choose their own password;
+ * with "Set a temporary password" the admin gives them one instead (e.g. no email set up).
+ */
+export async function createUser(_prev: Prev, fd: FormData): Promise<ActionResult<SentLink | null>> {
+  const invite = fd.get("setup") !== "password";
+  const result = await runAction(async () => {
     const me = await requirePermission("users.manage");
     const data = readUser(fd);
-    const password = readPassword(fd);
+    // Invited people get an unusable random password until they choose their own.
+    const password = invite ? randomBytes(32).toString("base64url") : readPassword(fd);
     await assertUnique(me.tenantId, data.email, data.handle);
     await assertLocation(me.tenantId, data.locationId);
     const [{ n }] = await db.select({ n: count() }).from(users).where(eq(users.tenantId, me.tenantId));
     const passwordHash = await hashPassword(password);
-    await db.transaction(async (tx) => {
+    const id = await db.transaction(async (tx) => {
       const [u] = await tx
         .insert(users)
         .values({ ...data, tenantId: me.tenantId, passwordHash, color: COLORS[n % COLORS.length]! })
@@ -98,9 +106,45 @@ export async function createUser(_prev: Prev, fd: FormData): Promise<ActionResul
         },
         tx,
       );
+      return u!.id;
+    });
+    const sent = invite ? await sendAccountLink({ id, name: data.name, email: data.email, tenantId: me.tenantId }, "invite", me.name) : null;
+    revalidatePath("/settings/team");
+    return sent;
+  });
+  if (!result.ok) return result;
+  const sent = result.data;
+  return { ...result, message: !sent ? "Team member added" : sent.emailed ? `Added — invite emailed to ${fd.get("email")}` : "Added — send them the invite link" };
+}
+
+/**
+ * Email someone a link to choose a password: an invite if they've never signed in,
+ * otherwise a password reset link. Returns the link so it can be shared by hand if email fails.
+ */
+export async function sendUserLink(id: number): Promise<ActionResult<SentLink>> {
+  const result = await runAction(async () => {
+    const me = await requirePermission("users.manage");
+    const [u] = await db
+      .select({ id: users.id, name: users.name, email: users.email, tenantId: users.tenantId, active: users.active, lastLoginAt: users.lastLoginAt })
+      .from(users)
+      .where(and(eq(users.tenantId, me.tenantId), eq(users.id, id)));
+    if (!u) throw new UserError("That person no longer exists.");
+    if (!u.active) throw new UserError("Reactivate them first.");
+    const purpose = u.lastLoginAt ? "reset" : "invite";
+    const sent = await sendAccountLink(u, purpose, me.name);
+    await logActivity({
+      tenantId: me.tenantId,
+      action: purpose === "invite" ? "user.invited" : "user.reset_link_sent",
+      entityType: "user",
+      entityId: u.id,
+      actorId: me.id,
+      summary: `${purpose === "invite" ? "Sent an invite to" : "Sent a password reset link to"} ${u.name}${sent.emailed ? "" : " (email not sent — link shared by hand)"}`,
     });
     revalidatePath("/settings/team");
-  }, "Team member added");
+    return sent;
+  });
+  if (!result.ok) return result;
+  return { ...result, message: result.data?.emailed ? "Email sent" : "Email isn't set up — copy the link" };
 }
 
 export async function updateUser(_prev: Prev, fd: FormData): Promise<ActionResult> {

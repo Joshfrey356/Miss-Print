@@ -19,6 +19,7 @@ import { emailProvider } from "@/lib/email";
 import { getSettings } from "@/lib/settings";
 import { nextNumber } from "@/lib/tenant";
 import { hashProofToken } from "@/lib/proofs";
+import { appUrl } from "@/lib/http";
 
 const actor = (u: SessionUser) => ({ id: u.id, name: u.name, tenantId: u.tenantId });
 
@@ -466,7 +467,7 @@ export async function sendProof(proofId: number, to: string, message: string | n
     const job = await loadJob(user.tenantId, proof.jobId);
     const [cust] = await db.select({ name: customers.name }).from(customers).where(and(eq(customers.tenantId, user.tenantId), eq(customers.id, job.customerId)));
     const token = randomBytes(32).toString("base64url");
-    const link = `${process.env.APP_URL ?? "http://localhost:3000"}/proof/${token}`;
+    const link = `${await appUrl()}/proof/${token}`;
     const { company } = await getSettings(user.tenantId);
     const subject = `Proof ready for approval: ${job.title} (${jobNo(job.number)}) — Proof V${proof.version}`;
     const text = [
