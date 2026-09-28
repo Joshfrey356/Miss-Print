@@ -9,6 +9,7 @@ import { useServerAction } from "@/components/use-action";
 import { removeJobItem, saveJobItem } from "@/app/(app)/jobs/actions";
 import { centsToInput, fmtSize, money, pct } from "@/lib/format";
 import { marginOf } from "@/lib/pricing/engine";
+import { runInfoOf, runSteps } from "@/lib/quotes/print-options";
 import type { JobItem } from "@/lib/db/schema";
 
 type Opt = { id: number; name: string };
@@ -49,6 +50,7 @@ export function ItemsTable({
                 <Spec label="Color" value={i.colors} />
               </dl>
               {i.specs && <p className="mt-1 whitespace-pre-line text-sm text-slate-600">{i.specs}</p>}
+              <RunBlock breakdown={i.pricingBreakdown} />
               {canSeeMoney && i.overrideReason && (
                 <p className="mt-1 text-xs text-slate-500">
                   Price override: {i.overrideReason}
@@ -127,6 +129,25 @@ export function ItemsTable({
         onConfirm={() => { if (removing) run(() => removeJobItem(jobId, removing.id)); }}
       />
     </div>
+  );
+}
+
+/** For print-estimated items: how to run it (press, paper, sheets…). Never shows prices. */
+function RunBlock({ breakdown }: { breakdown: unknown }) {
+  const run = runInfoOf(breakdown);
+  if (!run) return null;
+  return (
+    <details className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm" open>
+      <summary className="cursor-pointer select-none font-medium text-slate-700">How to run it</summary>
+      <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+        {runSteps(run).map((s) => (
+          <div key={s.label} className="contents">
+            <dt className="text-slate-500">{s.label}</dt>
+            <dd className="text-slate-800">{s.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </details>
   );
 }
 

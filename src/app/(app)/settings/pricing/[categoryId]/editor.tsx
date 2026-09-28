@@ -1,5 +1,6 @@
 "use client";
 import * as React from "react";
+import Link from "next/link";
 import { AlertTriangle, Calculator, Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -9,6 +10,7 @@ import {
   type PricingConfig,
   type PricingMethod,
 } from "@/lib/pricing/engine";
+import type { PrintCatalog, PrintConfig } from "@/lib/pricing/print";
 import { BASIS_LABELS, GROUP_LABELS, PRICING_METHOD_HINTS, PRICING_METHOD_LABELS, slugify } from "@/lib/admin/pricing-labels";
 import { centsToInput, fmtSize, money, parseMoney, pct } from "@/lib/format";
 import { Button } from "@/components/ui/button";
@@ -19,6 +21,24 @@ import { SuffixInput } from "../../_components/inputs";
 import { savePricingRule } from "../actions";
 
 type Loc = { id: number; name: string };
+/** Category print settings as saved. */
+type SavedPrintConfig = PrintConfig;
+type PrintForm = {
+  paperMode: "all" | "some";
+  paperIds: number[];
+  defaultPaperId: string;
+  pressMode: "all" | "some";
+  pressIds: number[];
+  opIds: number[];
+  sides: "1" | "2" | "multi";
+  pageCount: string;
+  colorsFront: string;
+  colorsBack: string;
+  bleedIn: string;
+  defaultBleed: boolean;
+  gutterIn: string;
+  paperMarkupPct: string;
+};
 type Mat = { id: number; name: string; unit: string; costCents: number };
 type CategoryFields = {
   name: string;
@@ -49,6 +69,7 @@ type Form = {
   targetMarginPct: string;
   rushPct: string;
   options: OptRow[];
+  print: PrintForm;
 };
 
 let rowId = 1;
@@ -77,6 +98,7 @@ function toForm(c: PricingConfig): Form {
     minimum: m(c.minimumCents),
     targetMarginPct: p(c.targetMarginPct),
     rushPct: p(c.rushPct),
+    print: toPrintForm(c.print),
     options: (c.finishingOptions ?? []).map((o) => ({
       id: nextId(),
       key: o.key,
@@ -86,6 +108,27 @@ function toForm(c: PricingConfig): Form {
       price: m(o.priceCents),
       cost: m(o.costCents),
     })),
+  };
+}
+
+function toPrintForm(pc: SavedPrintConfig | undefined): PrintForm {
+  const c = pc ?? {};
+  const pages = c.defaultPages ?? 1;
+  return {
+    paperMode: c.paperIds?.length ? "some" : "all",
+    paperIds: c.paperIds ?? [],
+    defaultPaperId: c.defaultPaperId ? String(c.defaultPaperId) : "",
+    pressMode: c.pressIds?.length ? "some" : "all",
+    pressIds: c.pressIds ?? [],
+    opIds: c.defaultOperationIds ?? [],
+    sides: pages > 2 ? "multi" : pages === 2 ? "2" : "1",
+    pageCount: pages > 2 ? String(pages) : "8",
+    colorsFront: String(c.defaultColorsFront ?? 4),
+    colorsBack: String(c.defaultColorsBack ?? (pages === 2 ? 4 : 0)),
+    bleedIn: n(c.bleedIn ?? 0.125),
+    defaultBleed: c.defaultBleed ?? false,
+    gutterIn: n(c.gutterIn),
+    paperMarkupPct: p(c.paperMarkupPct ?? 0.3),
   };
 }
 
@@ -133,6 +176,43 @@ function toConfig(f: Form): { config: PricingConfig; errors: string[] } {
     set("unitPriceCents", money$(f.unitPrice, "Price each"));
     set("unitCostCents", money$(f.unitCost, "Our cost each"));
   }
+  if (f.method === "sheet_fed") {
+    const pf = f.print;
+    const pc: SavedPrintConfig = {};
+    if (pf.paperMode === "some") {
+      if (!pf.paperIds.length) errors.push("Pick at least one paper, or choose “All paper stocks”.");
+      else pc.paperIds = pf.paperIds;
+    }
+    if (pf.defaultPaperId) {
+      const id = Number(pf.defaultPaperId);
+      if (pc.paperIds && !pc.paperIds.includes(id)) errors.push("The usual paper must be one of the papers you picked.");
+      pc.defaultPaperId = id;
+    }
+    if (pf.pressMode === "some") {
+      if (!pf.pressIds.length) errors.push("Pick at least one press, or choose “All presses”.");
+      else pc.pressIds = pf.pressIds;
+    }
+    if (pf.opIds.length) pc.defaultOperationIds = pf.opIds;
+    let pages = pf.sides === "2" ? 2 : 1;
+    if (pf.sides === "multi") {
+      const count = Number(pf.pageCount);
+      if (!Number.isInteger(count) || count < 3 || count > 1000) errors.push("Enter the number of pages (4, 8, 12…).");
+      else pages = count;
+    }
+    pc.defaultPages = pages;
+    pc.defaultColorsFront = Number(pf.colorsFront);
+    pc.defaultColorsBack = pages === 2 ? Number(pf.colorsBack) : 0;
+    const bleed = num$(pf.bleedIn, "Bleed");
+    if (bleed != null && bleed > 2) errors.push("Bleed must be under 2 inches.");
+    if (bleed != null) pc.bleedIn = bleed;
+    if (pf.defaultBleed) pc.defaultBleed = true;
+    const gutter = num$(pf.gutterIn, "Space between pieces");
+    if (gutter != null && gutter > 5) errors.push("Space between pieces must be under 5 inches.");
+    if (gutter) pc.gutterIn = gutter;
+    const markup = pct$(pf.paperMarkupPct, "Paper markup");
+    if (markup != null) pc.paperMarkupPct = markup;
+    config.print = pc;
+  }
   if (f.method === "quantity_tier") {
     const tiers = f.tiers
       .filter((t) => t.minQty.trim() || t.price.trim() || t.cost.trim())
@@ -148,9 +228,12 @@ function toConfig(f: Form): { config: PricingConfig; errors: string[] } {
     if (tiers.length) config.tiers = tiers.sort((a, b) => a.minQty - b.minQty);
   }
   set("setupCents", money$(f.setup, "Setup fee"));
-  set("wastePct", pct$(f.wastePct, "Waste"));
-  set("machineHours", num$(f.machineHours, "Machine hours"));
-  set("machineCostPerHourCents", money$(f.machineCostPerHour, "Machine cost per hour"));
+  // Print estimating works out spoilage and press time itself.
+  if (f.method !== "sheet_fed") {
+    set("wastePct", pct$(f.wastePct, "Waste"));
+    set("machineHours", num$(f.machineHours, "Machine hours"));
+    set("machineCostPerHourCents", money$(f.machineCostPerHour, "Machine cost per hour"));
+  }
   set("designHours", num$(f.designHours, "Design hours"));
   set("installHours", num$(f.installHours, "Install hours"));
   set("minimumCents", money$(f.minimum, "Minimum charge"));
@@ -183,6 +266,7 @@ export function PricingEditor({
   rules,
   locations,
   materials,
+  catalog,
 }: {
   categoryId: number;
   category: CategoryFields;
@@ -191,6 +275,7 @@ export function PricingEditor({
   rules: BusinessRules;
   locations: Loc[];
   materials: Mat[];
+  catalog: PrintCatalog;
 }) {
   const [cat, setCat] = React.useState(initialCategory);
   const [form, setForm] = React.useState<Form>(() => toForm(initialConfig));
@@ -320,6 +405,8 @@ export function PricingEditor({
               </div>
             )}
 
+            {form.method === "sheet_fed" && <PrintSettings value={form.print} onChange={(v) => upd("print", v)} catalog={catalog} />}
+
             {form.method === "quantity_tier" && (
               <TiersTable tiers={form.tiers} onChange={(t) => upd("tiers", t)} />
             )}
@@ -333,7 +420,10 @@ export function PricingEditor({
         </Card>
 
         <Card>
-          <CardHeader title="Setup, time & waste" description="Leave a box empty if it doesn't apply." />
+          <CardHeader
+            title={form.method === "sheet_fed" ? "Setup & time" : "Setup, time & waste"}
+            description={form.method === "sheet_fed" ? "Leave a box empty if it doesn't apply. Spoilage and press time come from the press settings." : "Leave a box empty if it doesn't apply."}
+          />
           <CardBody className="grid gap-4 sm:grid-cols-3">
             <Field label="Setup fee" htmlFor="c-setup" hint="Charged once per line.">
               <MoneyInput id="c-setup" {...txt("setup")} />
@@ -344,15 +434,19 @@ export function PricingEditor({
             <Field label="Install hours (usual)" htmlFor="c-ih" hint={`When install is needed. Charged at ${money(rules.installRateCents)}/hr.`}>
               <SuffixInput id="c-ih" suffix="hr" {...txt("installHours")} />
             </Field>
-            <Field label="Machine time per job" htmlFor="c-mh" hint="Counts toward our cost only.">
-              <SuffixInput id="c-mh" suffix="hr" {...txt("machineHours")} />
-            </Field>
-            <Field label="Machine cost per hour" htmlFor="c-mc" hint="What running the machine costs us.">
-              <MoneyInput id="c-mc" {...txt("machineCostPerHour")} />
-            </Field>
-            <Field label="Extra material for waste" htmlFor="c-waste" hint="Adds to our cost only.">
-              <SuffixInput id="c-waste" suffix="%" {...txt("wastePct")} />
-            </Field>
+            {form.method !== "sheet_fed" && (
+              <>
+                <Field label="Machine time per job" htmlFor="c-mh" hint="Counts toward our cost only.">
+                  <SuffixInput id="c-mh" suffix="hr" {...txt("machineHours")} />
+                </Field>
+                <Field label="Machine cost per hour" htmlFor="c-mc" hint="What running the machine costs us.">
+                  <MoneyInput id="c-mc" {...txt("machineCostPerHour")} />
+                </Field>
+                <Field label="Extra material for waste" htmlFor="c-waste" hint="Adds to our cost only.">
+                  <SuffixInput id="c-waste" suffix="%" {...txt("wastePct")} />
+                </Field>
+              </>
+            )}
           </CardBody>
         </Card>
 
@@ -372,7 +466,14 @@ export function PricingEditor({
         </Card>
 
         <Card>
-          <CardHeader title="Finishing options" description="Extras someone can tick on a quote, like grommets, lamination or rounded corners." />
+          <CardHeader
+            title="Finishing options"
+            description={
+              form.method === "sheet_fed"
+                ? "Extra charges someone can tick on a quote, like EDDM prep. Cutting, folding and other bindery come from Bindery & Services."
+                : "Extras someone can tick on a quote, like grommets, lamination or rounded corners."
+            }
+          />
           <OptionsTable options={form.options} onChange={(o) => upd("options", o)} />
         </Card>
 
@@ -411,7 +512,11 @@ export function PricingEditor({
       </div>
 
       <div className="lg:sticky lg:top-24 lg:self-start">
-        <TryIt key={form.method} config={config} rules={rules} materials={materials} />
+        {form.method === "sheet_fed" ? (
+          <PrintTryIt config={config} rules={rules} catalog={catalog} categoryName={cat.name} />
+        ) : (
+          <TryIt key={form.method} config={config} rules={rules} materials={materials} />
+        )}
       </div>
     </div>
   );
@@ -689,6 +794,452 @@ function TryIt({ config, rules, materials }: { config: PricingConfig; rules: Bus
             </div>
           </div>
         </div>
+        {r.warnings.length > 0 && (
+          <ul className="space-y-1.5">
+            {r.warnings.map((wn) => (
+              <li key={wn} className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                {wn}
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Print estimating (sheet_fed)
+// ---------------------------------------------------------------------------
+const COLOR_OPTIONS: [string, string][] = [
+  ["4", "Full color (4)"],
+  ["1", "Black or 1 color"],
+  ["2", "2 colors"],
+  ["3", "3 colors"],
+  ["5", "5 colors (4 + spot)"],
+  ["6", "6 colors"],
+];
+const BACK_OPTIONS: [string, string][] = [["0", "Blank"], ...COLOR_OPTIONS];
+
+const perM = (c: number) => `${money(c)}/1,000`;
+
+function Choice({ title, hint, children }: { title: string; hint?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="rounded-lg border border-slate-200 p-4">
+      <p className="text-[15px] font-semibold text-slate-900">{title}</p>
+      {hint && <p className="mt-0.5 text-sm text-slate-500">{hint}</p>}
+      <div className="mt-3 space-y-3">{children}</div>
+    </div>
+  );
+}
+
+function Radio({ checked, onChange, label, name }: { checked: boolean; onChange: () => void; label: React.ReactNode; name: string }) {
+  return (
+    <label className="flex cursor-pointer items-center gap-2 text-[15px] text-slate-800">
+      <input type="radio" name={name} checked={checked} onChange={onChange} className="size-4 accent-brand-500" />
+      {label}
+    </label>
+  );
+}
+
+function MissingCatalog({ what, href }: { what: string; href: string }) {
+  return (
+    <p className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+      <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+      <span>
+        No {what} yet.{" "}
+        <Link href={href} className="font-medium underline">
+          Add {what}
+        </Link>{" "}
+        to estimate this category.
+      </span>
+    </p>
+  );
+}
+
+const toggle = (ids: number[], id: number, on: boolean) => (on ? [...new Set([...ids, id])] : ids.filter((x) => x !== id));
+
+function PrintSettings({ value: v, onChange, catalog }: { value: PrintForm; onChange: (v: PrintForm) => void; catalog: PrintCatalog }) {
+  const set = <K extends keyof PrintForm>(k: K, val: PrintForm[K]) => onChange({ ...v, [k]: val });
+  const allowedPapers = v.paperMode === "some" ? catalog.papers.filter((p) => v.paperIds.includes(p.id)) : catalog.papers;
+  return (
+    <div className="space-y-4">
+      <Choice title="Paper" hint="Which paper stocks someone can pick for this kind of work.">
+        {catalog.papers.length === 0 ? (
+          <MissingCatalog what="paper stocks" href="/settings/paper" />
+        ) : (
+          <>
+            <div className="flex flex-wrap gap-x-6 gap-y-2">
+              <Radio name="paper-mode" checked={v.paperMode === "all"} onChange={() => set("paperMode", "all")} label="All paper stocks (new ones too)" />
+              <Radio name="paper-mode" checked={v.paperMode === "some"} onChange={() => set("paperMode", "some")} label="Only the ones I pick" />
+            </div>
+            {v.paperMode === "some" && (
+              <div className="grid gap-2 rounded-lg bg-slate-50 p-3 sm:grid-cols-2">
+                {catalog.papers.map((p) => (
+                  <Checkbox
+                    key={p.id}
+                    label={p.name}
+                    hint={perM(p.costPerMCents)}
+                    checked={v.paperIds.includes(p.id)}
+                    onChange={(e) => set("paperIds", toggle(v.paperIds, p.id, e.target.checked))}
+                  />
+                ))}
+              </div>
+            )}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Usual paper" htmlFor="pr-paper" hint="Picked for you on a new quote line.">
+                <Select id="pr-paper" value={v.defaultPaperId} onChange={(e) => set("defaultPaperId", e.target.value)}>
+                  <option value="">— Someone picks each time —</option>
+                  {allowedPapers.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Markup on paper" htmlFor="pr-markup" hint="Added to what the paper costs us, unless the paper has its own markup.">
+                <SuffixInput id="pr-markup" suffix="%" value={v.paperMarkupPct} onChange={(e) => set("paperMarkupPct", e.target.value)} placeholder="30" />
+              </Field>
+            </div>
+          </>
+        )}
+      </Choice>
+
+      <Choice title="Presses" hint="With no press picked on a quote, we price it on each of these and suggest the cheapest.">
+        {catalog.presses.length === 0 ? (
+          <MissingCatalog what="presses" href="/settings/equipment" />
+        ) : (
+          <>
+            <div className="flex flex-wrap gap-x-6 gap-y-2">
+              <Radio name="press-mode" checked={v.pressMode === "all"} onChange={() => set("pressMode", "all")} label="All digital & offset presses" />
+              <Radio name="press-mode" checked={v.pressMode === "some"} onChange={() => set("pressMode", "some")} label="Only the ones I pick" />
+            </div>
+            {v.pressMode === "some" && (
+              <div className="grid gap-2 rounded-lg bg-slate-50 p-3 sm:grid-cols-2">
+                {catalog.presses.map((p) => (
+                  <Checkbox
+                    key={p.id}
+                    label={p.name}
+                    hint={p.kind === "digital" ? "Digital" : "Offset"}
+                    checked={v.pressIds.includes(p.id)}
+                    onChange={(e) => set("pressIds", toggle(v.pressIds, p.id, e.target.checked))}
+                  />
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </Choice>
+
+      <Choice title="Added by default" hint="Bindery & services ticked on every new quote line in this category. People can untick them or add others.">
+        {catalog.operations.length === 0 ? (
+          <MissingCatalog what="bindery services" href="/settings/services" />
+        ) : (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {catalog.operations.map((o) => (
+              <Checkbox key={o.id} label={o.name} checked={v.opIds.includes(o.id)} onChange={(e) => set("opIds", toggle(v.opIds, o.id, e.target.checked))} />
+            ))}
+          </div>
+        )}
+      </Choice>
+
+      <Choice title="The usual job" hint="Starting choices on a new quote line — people can change them.">
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Field label="Sides / pages" htmlFor="pr-sides">
+            <Select id="pr-sides" value={v.sides} onChange={(e) => set("sides", e.target.value as PrintForm["sides"])}>
+              <option value="1">One-sided</option>
+              <option value="2">Two-sided</option>
+              <option value="multi">Booklet / multi-page</option>
+            </Select>
+          </Field>
+          {v.sides === "multi" && (
+            <Field label="Pages" htmlFor="pr-pages" hint="Every page is one printed side.">
+              <Input id="pr-pages" inputMode="numeric" value={v.pageCount} onChange={(e) => set("pageCount", e.target.value)} className="tabular" />
+            </Field>
+          )}
+          <Field label={v.sides === "2" ? "Front colors" : "Ink colors"} htmlFor="pr-cf">
+            <Select id="pr-cf" value={v.colorsFront} onChange={(e) => set("colorsFront", e.target.value)}>
+              {COLOR_OPTIONS.map(([k, l]) => (
+                <option key={k} value={k}>
+                  {l}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          {v.sides === "2" && (
+            <Field label="Back colors" htmlFor="pr-cb">
+              <Select id="pr-cb" value={v.colorsBack} onChange={(e) => set("colorsBack", e.target.value)}>
+                {BACK_OPTIONS.map(([k, l]) => (
+                  <option key={k} value={k}>
+                    {l}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
+        </div>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <div className="sm:col-span-3">
+            <Checkbox
+              label="The design usually bleeds (color runs off the edge)"
+              hint="Adds the bleed below on every edge, so fewer pieces may fit on a sheet."
+              checked={v.defaultBleed}
+              onChange={(e) => set("defaultBleed", e.target.checked)}
+            />
+          </div>
+          <Field label="Bleed size" htmlFor="pr-bleed" hint={'Per edge. Usually 1/8" (0.125).'}>
+            <SuffixInput id="pr-bleed" suffix="in" value={v.bleedIn} onChange={(e) => set("bleedIn", e.target.value)} placeholder="0.125" />
+          </Field>
+          <Field label="Space between pieces" htmlFor="pr-gutter" hint="Gap left between pieces on the sheet. Usually none.">
+            <SuffixInput id="pr-gutter" suffix="in" value={v.gutterIn} onChange={(e) => set("gutterIn", e.target.value)} placeholder="0" />
+          </Field>
+        </div>
+      </Choice>
+    </div>
+  );
+}
+
+/** A likely example size for the preview, from the category name. */
+function exampleSize(name: string): [string, string] {
+  const s = name.toLowerCase();
+  if (s.includes("postcard")) return ["6", "4"];
+  if (s.includes("card")) return ["3.5", "2"];
+  if (s.includes("brochure")) return ["11", "8.5"];
+  if (s.includes("booklet")) return ["5.5", "8.5"];
+  return ["8.5", "11"];
+}
+
+function PrintTryIt({ config, rules, catalog, categoryName }: { config: PricingConfig; rules: BusinessRules; catalog: PrintCatalog; categoryName: string }) {
+  const pc = (config.print ?? {}) as SavedPrintConfig;
+  const [dw, dh] = exampleSize(categoryName);
+  const [qty, setQty] = React.useState("500");
+  const [w, setW] = React.useState(dw);
+  const [h, setH] = React.useState(dh);
+  // Overrides; null = follow the category's settings on the left.
+  const [sides, setSides] = React.useState<string | null>(null);
+  const [cf, setCf] = React.useState<string | null>(null);
+  const [cb, setCb] = React.useState<string | null>(null);
+  const [bleed, setBleed] = React.useState<boolean | null>(null);
+  const [paper, setPaper] = React.useState<string | null>(null);
+  const [press, setPress] = React.useState("");
+  // Services ticked; null = the category's defaults (pre-ticked, like a new quote line).
+  const [ops, setOps] = React.useState<number[] | null>(null);
+  const [rush, setRush] = React.useState(false);
+
+  const papers = pc.paperIds?.length ? catalog.papers.filter((p) => pc.paperIds!.includes(p.id)) : catalog.papers;
+  const presses = pc.pressIds?.length ? catalog.presses.filter((p) => pc.pressIds!.includes(p.id)) : catalog.presses;
+  const defaultPages = pc.defaultPages ?? 1;
+  const pagesSel = sides ?? String(defaultPages);
+  const pages = Number(pagesSel) || 1;
+  const colorsFront = Number(cf ?? pc.defaultColorsFront ?? 4);
+  const colorsBack = pages === 2 ? Number(cb ?? pc.defaultColorsBack ?? 4) : 0;
+  const bleeds = bleed ?? pc.defaultBleed ?? false;
+  const paperSel = paper && papers.some((p) => String(p.id) === paper) ? paper : String(pc.defaultPaperId ?? papers[0]?.id ?? "");
+  const pressSel = press && presses.some((p) => String(p.id) === press) ? press : "";
+  const defaults = new Set(pc.defaultOperationIds ?? []);
+  const opIds = ops ?? [...defaults];
+  const q = Number(qty.replace(/,/g, "")) || 0;
+
+  const r = calculatePrice(
+    config,
+    {
+      quantity: q,
+      widthIn: Number(w) || 0,
+      heightIn: Number(h) || 0,
+      isRush: rush,
+      print: {
+        pages,
+        colorsFront,
+        colorsBack,
+        bleed: bleeds,
+        paperId: paperSel ? Number(paperSel) : null,
+        pressId: pressSel ? Number(pressSel) : null,
+        // The full list, like the quote builder sends (defaults included).
+        operationIds: opIds,
+      },
+    },
+    rules,
+    catalog,
+  );
+  const prod = r.production;
+  const low = r.marginPct != null && r.marginPct < r.targetMarginPct;
+  const pageOptions: [string, string][] = [
+    ["1", "One-sided"],
+    ["2", "Two-sided"],
+    ...(defaultPages > 2 ? [[String(defaultPages), `${defaultPages} pages`] as [string, string]] : []),
+    ...[4, 8, 12, 16, 24].filter((n) => n !== defaultPages).map((n) => [String(n), `${n} pages`] as [string, string]),
+  ];
+
+  return (
+    <Card className="border-brand-200">
+      <CardHeader
+        title={
+          <span className="flex items-center gap-2">
+            <Calculator className="size-5 text-brand-500" /> Try it
+          </span>
+        }
+        description="An example job, priced with your paper, presses and services. Nothing is saved."
+      />
+      <CardBody className="space-y-4">
+        <div className="grid grid-cols-3 gap-3">
+          <Field label="Quantity" htmlFor="pt-qty">
+            <Input id="pt-qty" inputMode="numeric" value={qty} onChange={(e) => setQty(e.target.value)} className="tabular" />
+          </Field>
+          <Field label="Width (in)" htmlFor="pt-w">
+            <Input id="pt-w" inputMode="decimal" value={w} onChange={(e) => setW(e.target.value)} className="tabular" />
+          </Field>
+          <Field label="Height (in)" htmlFor="pt-h">
+            <Input id="pt-h" inputMode="decimal" value={h} onChange={(e) => setH(e.target.value)} className="tabular" />
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Sides / pages" htmlFor="pt-sides">
+            <Select id="pt-sides" value={pagesSel} onChange={(e) => setSides(e.target.value)}>
+              {pageOptions.map(([k, l]) => (
+                <option key={k} value={k}>
+                  {l}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label={pages === 2 ? "Colors front / back" : "Ink colors"} htmlFor="pt-cf">
+            <div className="flex gap-2">
+              <Select id="pt-cf" value={String(colorsFront)} onChange={(e) => setCf(e.target.value)} aria-label="Front colors">
+                {COLOR_OPTIONS.map(([k]) => (
+                  <option key={k} value={k}>
+                    {k}
+                  </option>
+                ))}
+              </Select>
+              {pages === 2 && (
+                <Select value={String(colorsBack)} onChange={(e) => setCb(e.target.value)} aria-label="Back colors">
+                  {BACK_OPTIONS.map(([k]) => (
+                    <option key={k} value={k}>
+                      {k}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </div>
+          </Field>
+        </div>
+        <Field label="Paper" htmlFor="pt-paper">
+          <Select id="pt-paper" value={paperSel} onChange={(e) => setPaper(e.target.value)} disabled={!papers.length}>
+            {!papers.length && <option value="">No paper stocks yet</option>}
+            {papers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Press" htmlFor="pt-press">
+          <Select id="pt-press" value={pressSel} onChange={(e) => setPress(e.target.value)} disabled={!presses.length}>
+            <option value="">{presses.length ? "Best price (cheapest press)" : "No presses yet"}</option>
+            {presses.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        {catalog.operations.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-slate-700">Bindery & services</p>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+              {catalog.operations.map((o) => (
+                <Checkbox
+                  key={o.id}
+                  label={o.name}
+                  hint={defaults.has(o.id) ? "on by default" : undefined}
+                  checked={opIds.includes(o.id)}
+                  onChange={(e) => setOps(toggle(opIds, o.id, e.target.checked))}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+        <div className="flex flex-wrap gap-x-5 gap-y-2">
+          <Checkbox label="Bleeds" checked={bleeds} onChange={(e) => setBleed(e.target.checked)} />
+          <Checkbox label="Rush" checked={rush} onChange={(e) => setRush(e.target.checked)} />
+        </div>
+
+        <div className="rounded-xl bg-slate-50 p-4">
+          <p className="text-sm font-medium text-slate-500">Recommended price</p>
+          <p className="text-3xl font-semibold tracking-tight text-slate-900 tabular">{money(r.recommendedCents)}</p>
+          {q > 1 && r.recommendedCents > 0 && <p className="text-sm text-slate-500 tabular">{money(r.recommendedCents / q)} each</p>}
+          <dl className="mt-3 space-y-1.5 text-[15px]">
+            {r.lines.map((l, i) => (
+              <div key={i} className="flex justify-between gap-3">
+                <dt className="min-w-0 text-slate-700">
+                  {l.label}
+                  {l.detail && <span className="block text-xs text-slate-500">{l.detail}</span>}
+                </dt>
+                <dd className="shrink-0 text-slate-900 tabular">{money(l.cents)}</dd>
+              </div>
+            ))}
+          </dl>
+          <div className="mt-3 border-t border-slate-200 pt-3">
+            <div className="flex justify-between text-[15px]">
+              <span className="text-slate-700">Our estimated cost</span>
+              <span className="tabular">{money(r.estimatedCostCents)}</span>
+            </div>
+            <div className="mt-1 flex justify-between text-[15px]">
+              <span className="text-slate-700">Margin</span>
+              <span className={cn("font-semibold tabular", low ? "text-red-700" : "text-emerald-700")}>
+                {r.estimatedCostCents > 0 ? pct(r.marginPct) : "No cost entered"}
+                <span className="font-normal text-slate-500"> · target {pct(r.targetMarginPct)}</span>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {prod && (
+          <div className="rounded-xl border border-slate-200 p-4 text-[15px]">
+            <p className="font-semibold text-slate-900">How it runs</p>
+            <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+              <dt className="text-slate-500">Press</dt>
+              <dd className="text-slate-800">{prod.pressName}</dd>
+              <dt className="text-slate-500">Layout</dt>
+              <dd className="text-slate-800">
+                {prod.ups} up ({prod.layout}) on a {prod.pressSheet} sheet
+              </dd>
+              <dt className="text-slate-500">Paper</dt>
+              <dd className="text-slate-800">
+                {prod.parentSheets.toLocaleString("en-US")} × {prod.paperName}
+                {prod.outs > 1 ? `, cut ${prod.outs} out of each ${prod.parentSheet}` : ""}
+              </dd>
+              <dt className="text-slate-500">Press sheets</dt>
+              <dd className="text-slate-800 tabular">
+                {prod.pressSheets.toLocaleString("en-US")} ({prod.netSheets.toLocaleString("en-US")} + {prod.spoilageSheets.toLocaleString("en-US")} spoilage)
+              </dd>
+              <dt className="text-slate-500">Printing</dt>
+              <dd className="text-slate-800">
+                {prod.sidesPrinted === 2 ? "Both sides" : "One side"}
+                {prod.plates ? `, ${prod.plates} plates, ${prod.passes} pass${prod.passes === 1 ? "" : "es"}` : ""}
+                {prod.runHours ? `, about ${prod.runHours} hr on press` : ""}
+              </dd>
+            </dl>
+            {(r.pressOptions?.length ?? 0) > 1 && (
+              <div className="mt-3 border-t border-slate-100 pt-3">
+                <p className="text-sm font-medium text-slate-700">Other presses</p>
+                <ul className="mt-1 space-y-1 text-sm">
+                  {r.pressOptions!.map((o) => (
+                    <li key={o.pressId} className={cn("flex justify-between gap-3", o.pressId === prod.pressId ? "font-medium text-emerald-700" : "text-slate-600")}>
+                      <span>
+                        {o.pressName}
+                        {o.pressId === prod.pressId ? " — chosen" : ""}
+                      </span>
+                      <span className="tabular">{money(o.priceCents)}</span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-1 text-xs text-slate-500">Printing, paper and bindery only — before rush, discounts and minimums.</p>
+              </div>
+            )}
+          </div>
+        )}
         {r.warnings.length > 0 && (
           <ul className="space-y-1.5">
             {r.warnings.map((wn) => (

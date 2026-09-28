@@ -8,6 +8,7 @@ import { daysBetween, fmtDate, invoiceNo, jobNo, money, today } from "@/lib/form
 import { getSettings, type CompanyProfile } from "@/lib/settings";
 import { UserError } from "@/lib/actions";
 import { balanceOf } from "./service";
+import { invoicePayUrl, MIN_CARD_CENTS } from "@/lib/payments/links";
 
 type Actor = { id: number; name: string };
 
@@ -21,6 +22,8 @@ export function paymentReminderEmail(p: {
   jobNumber?: number | null;
   jobTitle?: string | null;
   now?: string;
+  /** "Pay online" link (Stripe), when the shop takes card payments online. */
+  payUrl?: string | null;
 }) {
   const now = p.now ?? today();
   const late = daysBetween(p.dueDate, now);
@@ -39,7 +42,8 @@ export function paymentReminderEmail(p: {
     "",
     `This is a friendly reminder that invoice ${inv}${forJob} has a balance of ${money(p.balanceCents)} and ${due}.`,
     "",
-    `You can pay by calling us at ${c.phone} or stopping by ${c.address}. If you've already sent payment, thank you — please disregard this note.`,
+    ...(p.payUrl ? [`Pay online by card: ${p.payUrl}`, ""] : []),
+    `${p.payUrl ? "You can also pay" : "You can pay"} by calling us at ${c.phone} or stopping by ${c.address}. If you've already sent payment, thank you — please disregard this note.`,
     "",
     `Questions? Just reply to this email or call ${c.phone}.`,
     "",
@@ -82,7 +86,14 @@ export async function sendPaymentReminder(tenantId: number, invoiceId: number, a
   if (!to) throw new UserError(`${row.customerName} has no email address on file. Add one to the customer first.`);
 
   const { company } = await getSettings(tenantId);
+  let payUrl: string | null = null;
+  try {
+    payUrl = balance >= MIN_CARD_CENTS ? await invoicePayUrl(tenantId, inv.id) : null;
+  } catch (e) {
+    console.error("[payment reminder] pay link", e); // send the reminder without it
+  }
   const { subject, text } = paymentReminderEmail({
+    payUrl,
     company,
     customerName: row.customerName,
     invoiceNumber: inv.number,

@@ -7,6 +7,7 @@ import { addDays, invoiceNo, jobNo, money, today } from "@/lib/format";
 import { taxFor } from "@/lib/pricing/engine";
 import { UserError } from "@/lib/actions";
 import { nextNumber } from "@/lib/tenant";
+import { queueAccountingSync } from "@/lib/accounting";
 import { PAYMENT_METHOD_LABELS } from "./labels";
 
 type Actor = { id: number; name: string };
@@ -35,7 +36,8 @@ export function agingBucket(dueDate: string, now = today()): AgingBucket {
 
 /** Create an invoice from a job's line items. One active invoice per job. */
 export async function createInvoiceFromJob(tenantId: number, jobId: number, actor: Actor): Promise<{ id: number; number: number }> {
-  return db.transaction(async (tx) => {
+  let created = false;
+  const result = await db.transaction(async (tx) => {
     const [job] = await tx.select().from(jobs).where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, jobId))).for("update");
     if (!job) throw new UserError("Job not found.");
     const [existing] = await tx
@@ -77,8 +79,12 @@ export async function createInvoiceFromJob(tenantId: number, jobId: number, acto
       { tenantId, action: "invoice.created", entityType: "invoice", entityId: inv!.id, jobId: job.id, customerId: job.customerId, actorId: actor.id, summary: `Created invoice ${invoiceNo(inv!.number)} for ${money(subtotal + tax)}` },
       tx,
     );
+    created = true;
     return { id: inv!.id, number: inv!.number };
   });
+  // QuickBooks (if this shop connected it): send in the background once the invoice is committed.
+  if (created) await queueAccountingSync(tenantId, [{ type: "invoice", id: result.id }]);
+  return result;
 }
 
 /** Recompute paid amount + status from non-void payments. */
@@ -100,7 +106,7 @@ export async function recordPayment(
   actor: Actor,
 ) {
   if (!(p.amountCents > 0)) throw new UserError("Enter a payment amount.");
-  return db.transaction(async (tx) => {
+  const pay = await db.transaction(async (tx) => {
     const [inv] = await tx.select().from(invoices).where(and(eq(invoices.tenantId, tenantId), eq(invoices.id, invoiceId))).for("update");
     if (!inv) throw new UserError("Invoice not found.");
     if (inv.status === "void") throw new UserError("This invoice is void.");
@@ -127,6 +133,8 @@ export async function recordPayment(
     );
     return pay!;
   });
+  await queueAccountingSync(tenantId, [{ type: "payment", id: pay.id }]);
+  return pay;
 }
 
 /** Financial records are never deleted — they are voided with a reason. */
@@ -143,6 +151,7 @@ export async function voidInvoice(tenantId: number, invoiceId: number, reason: s
       tx,
     );
   });
+  await queueAccountingSync(tenantId, [{ type: "invoice", id: invoiceId }]);
 }
 
 export async function voidPayment(tenantId: number, paymentId: number, reason: string, actor: Actor) {
@@ -168,4 +177,5 @@ export async function voidPayment(tenantId: number, paymentId: number, reason: s
       tx,
     );
   });
+  await queueAccountingSync(tenantId, [{ type: "payment", id: paymentId }]);
 }

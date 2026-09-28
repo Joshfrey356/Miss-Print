@@ -4,13 +4,17 @@ import { db } from "@/lib/db";
 import { customerContacts, customers, pricingRules, productCategories, quoteItems, quotes } from "@/lib/db/schema";
 import { getActiveUsers, getLocations, getMaterials } from "@/lib/lookups";
 import { getSettings } from "@/lib/settings";
+import { loadPrintCatalog } from "@/lib/pricing/server";
 import type { PricingConfig } from "@/lib/pricing/engine";
 import type { BuilderCategory, BuilderInitial } from "@/components/quotes/quote-builder";
 import type { PickedCustomer } from "@/components/customer-picker";
 
-/** Everything the quote builder needs. Costs are NOT included (pricing runs on the server). */
+/**
+ * Everything the quote builder needs. Costs are NOT included (pricing runs on the server): paper,
+ * presses and services are sent by id and name only.
+ */
 export async function builderOptions(tenantId: number) {
-  const [cats, mats, people, locations, { rules }] = await Promise.all([
+  const [cats, mats, people, locations, { rules }, catalog] = await Promise.all([
     db
       .select({ id: productCategories.id, name: productCategories.name, method: productCategories.pricingMethod, config: pricingRules.config, notes: pricingRules.notes, defaultNeedsInstall: productCategories.defaultNeedsInstall, defaultLocationId: productCategories.defaultLocationId })
       .from(productCategories)
@@ -21,6 +25,7 @@ export async function builderOptions(tenantId: number) {
     getActiveUsers(tenantId),
     getLocations(tenantId),
     getSettings(tenantId),
+    loadPrintCatalog(tenantId),
   ]);
   const categories: BuilderCategory[] = cats.map((c) => ({
     id: c.id,
@@ -30,6 +35,7 @@ export async function builderOptions(tenantId: number) {
     defaultNeedsInstall: c.defaultNeedsInstall,
     defaultLocationId: c.defaultLocationId,
     finishing: ((c.config as PricingConfig | null)?.finishingOptions ?? []).map((f) => ({ key: f.key, label: f.label, basis: f.basis, priceCents: f.priceCents })),
+    print: c.method === "sheet_fed" ? printOptions((c.config as PricingConfig | null)?.print ?? {}, catalog) : null,
   }));
   return {
     categories,
@@ -37,6 +43,24 @@ export async function builderOptions(tenantId: number) {
     salespeople: people.filter((p) => ["owner", "manager", "sales"].includes(p.role)).map((p) => ({ id: p.id, name: p.name })),
     locations: locations.map((l) => ({ id: l.id, name: l.name })),
     taxRate: rules.taxRate,
+    services: catalog.operations.map((o) => ({ id: o.id, name: o.name })),
+  };
+}
+
+/** A print category's choices: its allowed papers & presses (empty list in settings = all) and defaults. */
+function printOptions(pc: NonNullable<PricingConfig["print"]>, catalog: Awaited<ReturnType<typeof loadPrintCatalog>>): NonNullable<BuilderCategory["print"]> {
+  const papers = pc.paperIds?.length ? catalog.papers.filter((p) => pc.paperIds!.includes(p.id)) : catalog.papers;
+  const presses = pc.pressIds?.length ? catalog.presses.filter((p) => pc.pressIds!.includes(p.id)) : catalog.presses;
+  const defaultPaper = papers.find((p) => p.id === pc.defaultPaperId) ?? papers[0];
+  return {
+    papers: papers.map((p) => ({ id: p.id, name: p.name })),
+    presses: presses.map((p) => ({ id: p.id, name: p.name, kind: p.kind })),
+    defaultPaperId: defaultPaper?.id ?? null,
+    defaultServiceIds: (pc.defaultOperationIds ?? []).filter((id) => catalog.operations.some((o) => o.id === id)),
+    defaultPages: pc.defaultPages ?? 1,
+    defaultColorsFront: pc.defaultColorsFront ?? 4,
+    defaultColorsBack: pc.defaultColorsBack ?? 0,
+    defaultBleed: pc.defaultBleed ?? false,
   };
 }
 

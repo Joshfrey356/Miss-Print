@@ -50,7 +50,14 @@ export const pricingConfigSchema = z.object({
       bleedIn: z.number().min(0).max(2).optional(),
       gutterIn: z.number().min(0).max(5).optional(),
       paperMarkupPct: pct(10).optional(),
+      /** The design usually bleeds (runs to the edge) — the quote's bleed box starts ticked. */
+      defaultBleed: z.boolean().optional(),
     })
+    .refine((p) => !p.defaultPaperId || !p.paperIds?.length || p.paperIds.includes(p.defaultPaperId), {
+      message: "The default paper must be one of the papers this category offers.",
+      path: ["defaultPaperId"],
+    })
+    .refine((p) => (p.defaultPages ?? 1) > 1 || !p.defaultColorsBack, { message: "A one-sided piece has no back to print.", path: ["defaultColorsBack"] })
     .optional(),
 });
 

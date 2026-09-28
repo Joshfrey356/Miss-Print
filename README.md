@@ -39,6 +39,37 @@ One place to see and run the business: jobs, quotes, customers, production, proo
 - Job, quote and invoice numbers are counted per shop.
 - An existing single-shop database is upgraded automatically: everything becomes shop #1 (named from its company profile) and numbering continues where it left off.
 
+## Estimating, front counter, import & QuickBooks (replacing Printer's Plan)
+
+- **Print estimating.** Set up once in Settings:
+  - **Paper & Stock:** sheet size and cost per 1,000.
+  - **Presses & Equipment:** digital click charges; offset plates, make-ready, run speed and hourly rates.
+  - **Bindery & Services:** cutting, folding, stapling, padding and more, priced per job, piece, 1,000, sheet or hour.
+
+  Any product category can use **Print estimating (paper + press)**. The quote then works out:
+  - how many pieces fit on a sheet, and how to cut parent sheets down to press size
+  - spoilage
+  - paper with markup
+  - clicks, or plates plus press time and ink
+  - bindery
+
+  With no press picked it prices every press and suggests the cheapest ("best price"). A quote line can carry extra quantities ("500 for $X · 1,000 for $Y"), shown on the quote, in the email and on a printable customer quote. Job tickets show the shop floor how to run the job (press, paper, cut, N-up, sheets to pull) without prices. New shops start with a starter catalog and print-estimated categories for cards, flyers, brochures, postcards and letterhead.
+- **Front counter** (`/counter`):
+  - Walk-in and on-file sales from the price list or custom items.
+  - Payment by cash (with change), check, card on your terminal, or card by phone (QR code, through the shop's Stripe account). Split payments are allowed, or a balance can be left owing.
+  - "Needs production" also creates the job.
+  - Deposits on jobs and quotes, payments on open invoices.
+  - Printable 80 mm or emailed receipts.
+  - An **end-of-day** cash count with over/short.
+- **Card payments (Stripe).** Each shop connects its own Stripe account in Settings → Integrations (secret key + webhook signing secret; the page shows the webhook URL). Invoices get "Pay online" links and QR codes, and payment reminders include the link. Payments are recorded exactly once, from the webhook or when the customer returns.
+- **Import data** (Settings → Import Data). Bring in customers, contacts, past jobs, paper & materials and vendors from Printer's Plan exports or any CSV/Excel file:
+  - Columns are matched automatically, with a preview that flags problems.
+  - Existing records are filled in, not duplicated.
+  - Past jobs keep their old numbers.
+  - Each import can be undone.
+- **QuickBooks Online.** Each shop connects its own QuickBooks company in Settings → Integrations. Customers, invoices (as `INV-7001`), payments and voids are sent automatically in the background. The card shows what's synced and what failed, with Retry, and a start date keeps invoices already entered by hand from being doubled. QuickBooks Desktop isn't supported.
+- **Server setup for these:** `APP_SECRET_KEY` (encrypts each shop's Stripe keys and QuickBooks tokens; must never change), `APP_URL` (public address for pay links, webhooks and the QuickBooks redirect), and for QuickBooks the platform's Intuit app keys `QUICKBOOKS_CLIENT_ID` / `QUICKBOOKS_CLIENT_SECRET` (redirect URI `<APP_URL>/api/quickbooks/callback`). See `.env.example`.
+
 ## Quick start (development)
 
 Requires Node 20.9+ and PostgreSQL 14+ (with the `pg_trgm` extension, which is standard on Supabase, Neon and RDS).

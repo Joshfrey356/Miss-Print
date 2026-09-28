@@ -5,6 +5,7 @@ import { getUsers } from "@/lib/lookups";
 import { fmtDate, fmtDateTime, fmtSize, jobNo, parseJobNumber } from "@/lib/format";
 import { FULFILLMENT_LABELS, PRIORITY_LABELS, STATUS_LABELS } from "@/lib/jobs/workflow";
 import { PrintButton } from "@/components/print-button";
+import { runInfoOf, runSteps } from "@/lib/quotes/print-options";
 
 export const metadata = { title: "Job ticket" };
 
@@ -74,6 +75,26 @@ export default async function TicketPage({ params }: { params: Promise<{ number:
           ))}
         </tbody>
       </table>
+      {d.items.map((i) => {
+        // Only how to run it: the production info carries no prices.
+        const run = runInfoOf(i.pricingBreakdown);
+        if (!run) return null;
+        return (
+          <div key={`run-${i.id}`} className="mt-5 break-inside-avoid border-2 border-slate-900 p-3">
+            <p className="text-sm font-bold uppercase tracking-wide">
+              How to run it{d.items.length > 1 ? ` — ${i.description}` : ""} · {i.quantity.toLocaleString()} pcs
+            </p>
+            <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+              {runSteps(run).map((s) => (
+                <div key={s.label} className="contents">
+                  <dt className="font-semibold">{s.label}</dt>
+                  <dd>{s.value}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        );
+      })}
       {job.description && <Block title="Description" text={job.description} />}
       {job.internalNotes && <Block title="Shop notes" text={job.internalNotes} />}
       <div className="mt-8 grid grid-cols-3 gap-6 text-sm">

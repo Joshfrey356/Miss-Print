@@ -10,6 +10,7 @@ import { bool, runAction, str, UserError, type ActionResult } from "@/lib/action
 import { diff, logActivity } from "@/lib/activity";
 import { today } from "@/lib/format";
 import { findDuplicateCustomers, getPrimaryContact, type DuplicateMatch } from "@/lib/customers/queries";
+import { queueAccountingSync } from "@/lib/accounting";
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -227,6 +228,8 @@ export async function saveCustomer(customerId: number | null, fd: FormData): Pro
         }
       });
     }
+    // Customers already in QuickBooks get the edit too (unlinked ones are sent with their first invoice).
+    if (existing?.externalId) await queueAccountingSync(user.tenantId, [{ type: "customer", id }]);
     revalidatePath("/customers");
     revalidatePath(`/customers/${id}`);
     redirect(`/customers/${id}`);

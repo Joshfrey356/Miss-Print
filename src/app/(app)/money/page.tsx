@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Plus } from "lucide-react";
 import { requirePagePermission } from "@/lib/auth";
 import { can } from "@/lib/permissions";
-import { accounting } from "@/lib/accounting";
+import { getQboConnection } from "@/lib/accounting/quickbooks/server";
 import { PageHeader } from "@/components/ui/page-header";
 import { LinkButton } from "@/components/ui/button";
 import { LinkTabs } from "@/components/ui/tabs";
@@ -33,7 +33,7 @@ export default async function MoneyPage({ searchParams }: { searchParams: Promis
   const tabs = TABS.filter((t) => t.key !== "profitability" || canMargins);
   const tab = tabs.find((t) => t.key === params.tab)?.key ?? "overview";
   const counts = await invoiceFilterCounts(user.tenantId);
-  const acct = accounting();
+  const qbo = await getQboConnection(user.tenantId);
 
   return (
     <div>
@@ -66,9 +66,9 @@ export default async function MoneyPage({ searchParams }: { searchParams: Promis
       {tab === "profitability" && <ProfitabilityTab tenantId={user.tenantId} params={params} />}
 
       <p className="mt-8 text-center text-sm text-slate-400">
-        {acct.name === "none"
-          ? "QuickBooks sync: not connected. QuickBooks stays your official books; export CSVs for your bookkeeper any time."
-          : `Accounting sync: ${acct.name}`}
+        {qbo?.active
+          ? `QuickBooks sync: connected to ${qbo.config.companyName ?? "your QuickBooks company"}. Invoices and payments are sent automatically.`
+          : "QuickBooks sync: not connected (Settings → Integrations). QuickBooks stays your official books; export CSVs for your bookkeeper any time."}
       </p>
     </div>
   );

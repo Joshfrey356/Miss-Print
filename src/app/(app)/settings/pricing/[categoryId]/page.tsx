@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { pricingRules, productCategories, users } from "@/lib/db/schema";
 import { getLocations, getMaterials } from "@/lib/lookups";
 import { getSettings } from "@/lib/settings";
+import { loadPrintCatalog } from "@/lib/pricing/server";
 import { fmtDateTime } from "@/lib/format";
 import type { PricingConfig } from "@/lib/pricing/engine";
 import { SettingsPage } from "../../_components/settings-page";
@@ -20,7 +21,7 @@ export default async function EditPricingPage({ params, searchParams }: { params
   if (!Number.isInteger(id) || id <= 0) notFound();
   const [cat] = await db.select().from(productCategories).where(and(eq(productCategories.tenantId, user.tenantId), eq(productCategories.id, id)));
   if (!cat) notFound();
-  const [[rule], locs, mats, { rules }] = await Promise.all([
+  const [[rule], locs, mats, { rules }, catalog] = await Promise.all([
     db
       .select({ config: pricingRules.config, notes: pricingRules.notes, updatedAt: pricingRules.updatedAt, by: users.name })
       .from(pricingRules)
@@ -29,6 +30,8 @@ export default async function EditPricingPage({ params, searchParams }: { params
     getLocations(user.tenantId),
     getMaterials(user.tenantId),
     getSettings(user.tenantId),
+    // Paper, presses and services, for print estimating (the live preview runs the real estimator).
+    loadPrintCatalog(user.tenantId),
   ]);
   const config = (rule?.config as PricingConfig | undefined) ?? { method: cat.pricingMethod };
 
@@ -60,6 +63,7 @@ export default async function EditPricingPage({ params, searchParams }: { params
         rules={rules}
         locations={locs.map((l) => ({ id: l.id, name: l.name }))}
         materials={mats.map((m) => ({ id: m.id, name: m.name, unit: m.unit, costCents: m.costCents }))}
+        catalog={catalog}
       />
     </SettingsPage>
   );

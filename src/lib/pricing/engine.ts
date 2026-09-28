@@ -233,13 +233,15 @@ export function calculatePrice(
           pages: input.print?.pages ?? pc.defaultPages ?? 1,
           colorsFront: input.print?.colorsFront ?? pc.defaultColorsFront ?? 4,
           colorsBack: input.print?.colorsBack ?? pc.defaultColorsBack ?? 0,
-          bleed: input.print?.bleed ?? false,
+          bleed: input.print?.bleed ?? pc.defaultBleed ?? false,
           paperId: input.print?.paperId ?? null,
           pressId: input.print?.pressId ?? null,
           operationIds: input.print?.operationIds ?? [],
         },
         catalog,
-        pc,
+        // The category's default services are pre-ticked in the quote builder, which then sends the
+        // full list it wants; they only apply automatically when no print choices were sent.
+        input.print ? { ...pc, defaultOperationIds: [] } : pc,
       );
       lines.push(...est.lines);
       costLines.push(...est.costLines);

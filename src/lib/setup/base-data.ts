@@ -1,10 +1,13 @@
 import * as s from "@/lib/db/schema";
 import type { PricingConfig } from "@/lib/pricing/engine";
 import type { Tx } from "@/lib/db";
+import { insertStarterPrintCatalog, starterPrintCategories } from "@/lib/estimating/starter-catalog";
 
 /**
  * Starter data for a NEW shop: a main location (+ off-site for installs), the owner account,
- * business rules, common vendors & materials, product categories and starter pricing.
+ * business rules, common vendors & materials, paper stocks, presses & bindery services for print
+ * estimating, product categories and starter pricing (cards, flyers, brochures, postcards and
+ * letterhead are estimated from paper + press).
  * Everything is editable afterwards in Settings. Runs inside the caller's transaction.
  * (scripts/seed.ts builds the Miss Print demo shop separately.)
  */
@@ -74,16 +77,18 @@ export async function insertBaseData(db: Tx, tenantId: number, ownerInput: Owner
       { name: "3M IJ180Cv3 Wrap Vinyl + 8518 Laminate", kind: "vinyl", unit: "sqft", costCents: 320, vendorId: V["Fellers"]!.id, quantityOnHand: 900, reorderLevel: 450 },
       { name: "Oracal 651 Cut Vinyl", kind: "vinyl", unit: "sqft", costCents: 60, vendorId: V["Fellers"]!.id, quantityOnHand: 500, reorderLevel: 200 },
       { name: "Backlit Film", kind: "vinyl", unit: "sqft", costCents: 240, vendorId: V["Grimco"]!.id, quantityOnHand: 80, reorderLevel: 50 },
-      { name: "100# Gloss Text", kind: "paper", unit: "sheet", costCents: 12, vendorId: V["Veritiv"]!.id, quantityOnHand: 8000, reorderLevel: 3000 },
-      { name: "14pt C2S Cover", kind: "paper", unit: "sheet", costCents: 22, vendorId: V["Veritiv"]!.id, quantityOnHand: 4000, reorderLevel: 1500 },
       { name: "24# White Wove #10 Envelope", kind: "paper", unit: "each", costCents: 4, vendorId: V["Veritiv"]!.id, quantityOnHand: 5000, reorderLevel: 2000 },
     ].map((m) => ({ ...m, tenantId, quantityOnHand: null, reorderLevel: null })))
     .returning();
   const M = Object.fromEntries(mats.map((m) => [m.name, m]));
 
+  // ---------- print estimating: paper stocks, presses, bindery & services ----------
+  const printCatalog = await insertStarterPrintCatalog(db, tenantId, { paperVendorId: V["Veritiv"]!.id, locationId: main!.id });
+  const printCats = starterPrintCategories(printCatalog);
+
   // ---------- categories & pricing rules ----------
   type Cat = { slug: string; name: string; group: string; method: PricingConfig["method"]; loc: number; proof?: boolean; install?: boolean; config: PricingConfig; notes?: string };
-  const cats: Cat[] = [
+  const baseCats: Cat[] = [
     { slug: "business-cards", name: "Business Cards", group: "print", method: "quantity_tier", loc: main!.id, config: { method: "quantity_tier", tiers: [{ minQty: 250, priceCents: 4500, costCents: 1400 }, { minQty: 500, priceCents: 5500, costCents: 1800 }, { minQty: 1000, priceCents: 7000, costCents: 2500 }, { minQty: 2500, priceCents: 13500, costCents: 5200 }], finishingOptions: [{ key: "double", label: "Double-sided", basis: "flat", priceCents: 1500, costCents: 400 }, { key: "round", label: "Rounded corners", basis: "flat", priceCents: 2000 }, { key: "soft", label: "Soft-touch coating", basis: "flat", priceCents: 3500, costCents: 1200 }] }, notes: "Standard 14pt, full color. Double-sided adds $15. Repeat orders usually skip the proof." },
     { slug: "brochures", name: "Brochures", group: "print", method: "quantity_tier", loc: main!.id, config: { method: "quantity_tier", tiers: [{ minQty: 250, priceCents: 24500, costCents: 9000 }, { minQty: 500, priceCents: 32500, costCents: 12500 }, { minQty: 1000, priceCents: 45000, costCents: 18500 }, { minQty: 2500, priceCents: 82500, costCents: 36000 }], finishingOptions: [{ key: "fold", label: "Tri-fold / bi-fold", basis: "flat", priceCents: 0 }, { key: "score", label: "Scoring (heavy stock)", basis: "flat", priceCents: 2500 }] }, notes: "8.5×11 100# gloss text, full color both sides, folded." },
     { slug: "flyers", name: "Flyers", group: "print", method: "quantity_tier", loc: main!.id, config: { method: "quantity_tier", tiers: [{ minQty: 100, priceCents: 5500, costCents: 1500 }, { minQty: 250, priceCents: 8500, costCents: 2800 }, { minQty: 500, priceCents: 12500, costCents: 4500 }, { minQty: 1000, priceCents: 18500, costCents: 7200 }, { minQty: 2500, priceCents: 36500, costCents: 15500 }] } },
@@ -107,6 +112,8 @@ export async function insertBaseData(db: Tx, tenantId: number, ownerInput: Owner
     { slug: "offset-printing", name: "Offset / Custom Commercial Printing", group: "print", method: "custom", loc: main!.id, config: { method: "custom" } },
     { slug: "other", name: "Other / Custom", group: "other", method: "custom", loc: main!.id, config: { method: "custom" } },
   ];
+  // Cards, flyers, brochures, postcards and letterhead: estimated from paper + press.
+  const cats = baseCats.map((c) => (printCats[c.slug] ? { ...c, method: "sheet_fed" as const, config: printCats[c.slug]!.config, notes: printCats[c.slug]!.notes } : c));
   const catRows = await db
     .insert(s.productCategories)
     .values(cats.map((c, i) => ({ tenantId, slug: c.slug, name: c.name, group: c.group, pricingMethod: c.method, defaultLocationId: c.loc, defaultNeedsProof: c.proof ?? true, defaultNeedsInstall: c.install ?? false, sortOrder: i })))

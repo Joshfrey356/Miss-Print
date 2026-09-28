@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Ban, History, Mail } from "lucide-react";
+import { Ban, CreditCard, History, Mail, Store } from "lucide-react";
 import { getCurrentUser, requirePagePermission } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { getSettings } from "@/lib/settings";
@@ -9,6 +9,7 @@ import { getBrand } from "@/lib/brand";
 import { Logo } from "@/components/logo";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { LinkButton } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { Table, Td, Th, THead, Tr } from "@/components/ui/table";
@@ -18,6 +19,10 @@ import { getInvoiceDetail } from "@/lib/money/queries";
 import { balanceOf, isInvoiceOverdue, PAYMENT_METHOD_LABELS, TERMS_LABELS } from "@/lib/money/service";
 import { PrintButton, RecordPaymentButton, SendReminderButton, VoidButton } from "../../_components/client";
 import { Num } from "../../_components/parts";
+import { invoicePayUrl, MIN_CARD_CENTS, qrDataUrl } from "@/lib/payments/links";
+import { PayOnlineActions } from "../../../counter/_components/pay-online";
+import { QuickBooksStatus } from "@/components/accounting/quickbooks-status";
+import { getQboStatuses } from "@/lib/accounting/quickbooks/server";
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -33,6 +38,7 @@ export default async function InvoicePage({ params }: Props) {
   if (!/^\d+$/.test(id)) notFound();
   const d = await getInvoiceDetail(user.tenantId, Number(id));
   if (!d) notFound();
+  const qbPayments = await getQboStatuses(user.tenantId, "payment", d.payments.map(({ p }) => p.id));
   const { inv, customer, job } = d;
   const [{ company }, brand] = await Promise.all([getSettings(user.tenantId), getBrand(user.tenantId)]);
   const now = today();
@@ -42,6 +48,10 @@ export default async function InvoicePage({ params }: Props) {
   const activePayments = d.payments.filter((x) => !x.p.voidedAt);
   const canEdit = can(user.role, "money.edit");
   const canVoid = can(user.role, "money.void");
+  const canCounter = can(user.role, "counter.use");
+  // "Pay online" (Stripe): a link the customer can open any time; null when Stripe isn't connected.
+  const payUrl = !isVoid && balance >= MIN_CARD_CENTS && (canEdit || canCounter) ? await invoicePayUrl(user.tenantId, inv.id) : null;
+  const payQr = payUrl ? await qrDataUrl(payUrl) : null;
   const billTo = customer.billingAddress ?? [customer.address, [customer.city, customer.state].filter(Boolean).join(", ") + (customer.zip ? ` ${customer.zip}` : "")].filter((s) => s && s.trim()).join("\n");
 
   return (
@@ -56,6 +66,7 @@ export default async function InvoicePage({ params }: Props) {
             <span className="flex flex-wrap items-center gap-3">
               {invoiceNo(inv.number)}
               <InvoiceStatusBadge status={inv.status} overdue={overdue} />
+              <QuickBooksStatus tenantId={user.tenantId} entityType="invoice" entityId={inv.id} />
             </span>
           }
           subtitle={
@@ -73,6 +84,12 @@ export default async function InvoicePage({ params }: Props) {
           }
           actions={
             <>
+              {canCounter && !isVoid && balance > 0 && (
+                <LinkButton href={`/counter/sale/${inv.id}`} variant="success">
+                  <Store className="size-4" />
+                  Take payment
+                </LinkButton>
+              )}
               {canEdit && !isVoid && balance > 0 && <RecordPaymentButton invoiceId={inv.id} balanceCents={balance} today={now} />}
               {canEdit && !isVoid && balance > 0 && (
                 <SendReminderButton invoiceId={inv.id} invoiceNumber={inv.number} customerName={customer.name} balanceCents={balance} hasEmail={d.hasEmail} size="md" />
@@ -161,7 +178,14 @@ export default async function InvoicePage({ params }: Props) {
                     {d.payments.map(({ p, recordedByName }) => (
                       <Tr key={p.id} className={p.voidedAt ? "text-slate-400" : undefined}>
                         <Td className="whitespace-nowrap">{fmtDate(p.receivedOn, { year: true })}</Td>
-                        <Td>{PAYMENT_METHOD_LABELS[p.method]}</Td>
+                        <Td>
+                          {PAYMENT_METHOD_LABELS[p.method]}
+                          {!p.voidedAt && (
+                            <span className="mt-1 block">
+                              <QuickBooksStatus tenantId={user.tenantId} entityType="payment" entityId={p.id} status={qbPayments.get(p.id) ?? null} />
+                            </span>
+                          )}
+                        </Td>
                         <Td>
                           {p.reference ?? "—"}
                           {p.notes && <span className="block whitespace-pre-line text-xs text-slate-500">{p.notes}</span>}
@@ -169,7 +193,7 @@ export default async function InvoicePage({ params }: Props) {
                         <Td className="text-right">
                           <Num className={p.voidedAt ? "line-through" : "font-medium"}>{money(p.amountCents)}</Num>
                         </Td>
-                        <Td className="whitespace-nowrap">{recordedByName ?? "—"}</Td>
+                        <Td className="whitespace-nowrap">{recordedByName ?? (p.processorRef ? "Paid online" : "—")}</Td>
                         {canVoid && (
                           <Td className="text-right">
                             {p.voidedAt ? (
@@ -217,6 +241,15 @@ export default async function InvoicePage({ params }: Props) {
                 {inv.notes && <p className="whitespace-pre-line border-t border-slate-100 pt-3 text-sm text-slate-600">{inv.notes}</p>}
               </CardBody>
             </Card>
+
+            {payUrl && payQr && (
+              <Card>
+                <CardHeader title={<span className="flex items-center gap-2"><CreditCard className="size-4 text-slate-500" /> Pay online</span>} description={`The customer can pay the ${money(balance)} balance by card (Stripe). Payment reminders include this link.`} />
+                <CardBody>
+                  <PayOnlineActions invoiceId={inv.id} url={payUrl} qr={payQr} defaultEmail={customer.email} />
+                </CardBody>
+              </Card>
+            )}
 
             {d.reminders.length > 0 && (
               <Card>

@@ -138,7 +138,7 @@ test("a piece that doesn't fit is reported, not priced", () => {
 test("sheet_fed category: rush and services apply on top of the estimate", () => {
   const r = calculatePrice(
     { method: "sheet_fed", print: { defaultOperationIds: [100] } },
-    { quantity: 1000, widthIn: 3.5, heightIn: 2, isRush: true, print: { pages: 2, colorsFront: 4, colorsBack: 4, bleed: true, paperId: 1, pressId: 10, operationIds: [] } },
+    { quantity: 1000, widthIn: 3.5, heightIn: 2, isRush: true, print: { pages: 2, colorsFront: 4, colorsBack: 4, bleed: true, paperId: 1, pressId: 10, operationIds: [100] } },
     R,
     catalog,
   );
@@ -147,6 +147,16 @@ test("sheet_fed category: rush and services apply on top of the estimate", () =>
   assert.equal(r.estimatedCostCents, 1830 + 500);
   assert.equal(r.production?.ups, 21);
   assert.equal(r.pressOptions?.length, 1);
+  // Default services are pre-ticked, not forced: leaving Cutting out of the chosen list drops it.
+  const noCut = calculatePrice(
+    { method: "sheet_fed", print: { defaultOperationIds: [100] } },
+    { quantity: 1000, widthIn: 3.5, heightIn: 2, print: { pages: 2, colorsFront: 4, colorsBack: 4, bleed: true, paperId: 1, pressId: 10, operationIds: [] } },
+    R,
+    catalog,
+  );
+  assert.equal(noCut.recommendedCents, 5817);
+  // With no print choices at all (e.g. a quick price), the defaults apply.
+  assert.equal(calculatePrice({ method: "sheet_fed", print: { defaultOperationIds: [100], defaultPaperId: 1 } }, { quantity: 1000, widthIn: 3.5, heightIn: 2 }, R, { ...catalog, presses: [digital] }).lines.some((l) => l.label === "Cutting"), true);
   // Without a catalog the method can't price.
   assert.match(calculatePrice({ method: "sheet_fed" }, { quantity: 10 }).warnings.join(), /isn't available/);
 });

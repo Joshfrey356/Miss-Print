@@ -21,6 +21,7 @@ import { ACTIVE_STATUSES, BOARD_COLUMNS, OPEN_STATUSES, READY_STATUSES, WORK_STA
 import type { SessionUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { getLocations } from "@/lib/lookups";
+import { breakdownForRole } from "@/lib/quotes/print-options";
 
 const designer = aliasedTable(users, "designer");
 const producer = aliasedTable(users, "producer");
@@ -338,6 +339,8 @@ export async function getJobDetail(number: number, user: SessionUser) {
     overrideReason: showMoney ? i.overrideReason : null,
     estimatedCostCents: showCost ? i.estimatedCostCents : 0,
     pricingInput: showCost ? i.pricingInput : null,
+    // Production info only without money rights; no costs without margin rights.
+    pricingBreakdown: breakdownForRole(i.pricingBreakdown, showMoney, showCost),
   }));
   const MONEY_ACTIONS = ["quote.price_changed", "job.price_changed", "invoice.created", "invoice.reminder_sent", "payment.received", "invoice.voided", "payment.voided"];
   // Expenses are costs: hidden from everyone without margins.view (incl. managers/sales).

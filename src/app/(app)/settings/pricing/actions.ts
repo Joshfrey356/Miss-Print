@@ -10,6 +10,8 @@ import { locations, pricingMethodEnum, pricingRules, productCategories } from "@
 import { diff, logActivity } from "@/lib/activity";
 import { cleanPricingConfig } from "@/lib/admin/pricing-schema";
 import { GROUP_LABELS, PRICING_METHOD_LABELS, slugify } from "@/lib/admin/pricing-labels";
+import { missingIds } from "@/lib/estimating/catalog";
+import type { PricingConfig } from "@/lib/pricing/engine";
 
 type Prev = ActionResult | null;
 
@@ -33,6 +35,16 @@ export async function savePricingRule(categoryId: number, input: SavePricingInpu
     const user = await requirePermission("pricing.edit");
     const category = categorySchema.parse(input.category);
     const config = cleanPricingConfig(input.config);
+    if (config.print) {
+      // Papers, presses and services picked in the editor must be this shop's own.
+      const pc = config.print;
+      const bad = [
+        ...(await missingIds(user.tenantId, "paper", [...(pc.paperIds ?? []), ...(pc.defaultPaperId ? [pc.defaultPaperId] : [])])),
+        ...(await missingIds(user.tenantId, "equipment", pc.pressIds ?? [])),
+        ...(await missingIds(user.tenantId, "operation", pc.defaultOperationIds ?? [])),
+      ];
+      if (bad.length) throw new UserError("Some of the paper, presses or services picked no longer exist. Reload the page and try again.");
+    }
     const notes = input.notes?.trim() ? input.notes.trim().slice(0, 5000) : null;
     if (category.defaultLocationId) {
       const [loc] = await db.select({ id: locations.id }).from(locations).where(and(eq(locations.tenantId, user.tenantId), eq(locations.id, category.defaultLocationId)));
@@ -124,7 +136,10 @@ export async function createCategory(_prev: Prev, fd: FormData): Promise<ActionR
         })
         .returning({ id: productCategories.id });
       newId = cat!.id;
-      await tx.insert(pricingRules).values({ tenantId: user.tenantId, categoryId: newId, config: { method }, updatedBy: user.id });
+      // Print estimating starts from the usual defaults: one-sided, full color, 1/8" bleed, 30% on paper.
+      const config: PricingConfig =
+        method === "sheet_fed" ? { method, print: { defaultPages: 1, defaultColorsFront: 4, defaultColorsBack: 0, bleedIn: 0.125, paperMarkupPct: 0.3 } } : { method };
+      await tx.insert(pricingRules).values({ tenantId: user.tenantId, categoryId: newId, config, updatedBy: user.id });
       await logActivity(
         {
           tenantId: user.tenantId,

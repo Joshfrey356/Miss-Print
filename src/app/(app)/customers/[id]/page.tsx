@@ -23,6 +23,7 @@ import { ArchiveCustomerButton } from "../_components/archive-button";
 import { ContactsCard } from "../_components/contacts-card";
 import { NotesCard } from "../_components/notes-card";
 import { ActivityCard, FilesTab, InvoicesTab, JobList, JobsTable, MessagesTab, PastOrders, QuoteList, QuotesTable } from "./sections";
+import { QuickBooksStatus } from "@/components/accounting/quickbooks-status";
 
 type Tab = "overview" | "jobs" | "quotes" | "invoices" | "files" | "messages";
 const JOB_SORTS: CustomerJobSort[] = ["number", "title", "status", "due", "created", "total"];
@@ -139,6 +140,7 @@ export default async function CustomerPage({
               {customer.taxExempt && <Badge tone="teal">Tax exempt{customer.taxExemptId ? ` · ${customer.taxExemptId}` : ""}</Badge>}
               {customer.poRequired && <Badge tone="amber">PO required</Badge>}
               {can.money && discount > 0 && <Badge tone="violet">{discount}% customer discount</Badge>}
+              {can.money && <QuickBooksStatus tenantId={user.tenantId} entityType="customer" entityId={customer.id} />}
             </div>
             <p className="text-sm text-slate-500">
               {customer.salesperson ? (

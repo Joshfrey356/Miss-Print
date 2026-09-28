@@ -46,6 +46,8 @@ export function priceSummary(config: PricingConfig | null | undefined): string {
     }
     case "per_unit":
       return config.unitPriceCents ? `${$(config.unitPriceCents)} each` : "Price each not set";
+    case "sheet_fed":
+      return "From paper, press & bindery";
     default:
       return "Priced by hand";
   }

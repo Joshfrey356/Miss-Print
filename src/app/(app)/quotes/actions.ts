@@ -4,23 +4,38 @@ import { redirect } from "next/navigation";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { communications, customerContacts, customers, jobItems, jobs, locations, materials, productCategories, quoteItems, quotes, users } from "@/lib/db/schema";
+import { communications, customerContacts, customers, equipment, jobItems, jobs, locations, materials, operations, productCategories, quoteItems, quotes, users } from "@/lib/db/schema";
 import { requirePermission } from "@/lib/auth";
 import { nextNumber } from "@/lib/tenant";
 import { can } from "@/lib/permissions";
 import { runAction, UserError } from "@/lib/actions";
 import { logActivity } from "@/lib/activity";
-import { priceItem, publicResult, type ItemPricingRequest } from "@/lib/pricing/server";
+import { publicResult, type ItemPricingRequest } from "@/lib/pricing/server";
+import { priceLine, storedBreakdown } from "@/lib/quotes/pricing";
+import { MAX_ALT_QUANTITIES, quantityOptionsText, type QuantityOption, type RunInfo, type StoredBreakdown } from "@/lib/quotes/print-options";
 import { findSimilarJobs, type SimilarQuery } from "@/lib/pricing/history";
 import { convertQuoteToJob } from "@/lib/jobs/service";
 import { getSettings } from "@/lib/settings";
 import { addDays, fmtSize, money, quoteNo, today } from "@/lib/format";
-import { taxFor } from "@/lib/pricing/engine";
+import { taxFor, type PricingResult } from "@/lib/pricing/engine";
 import { emailProvider } from "@/lib/email";
 
 // ---------------------------------------------------------------------------
 // Live pricing & history (called while typing in the quote builder)
 // ---------------------------------------------------------------------------
+/** sheet_fed lines: sides/pages, colors, bleed, paper, press (null = best price) and services. */
+const PrintSpec = z.object({
+  pages: z.number().int().min(1).max(1000),
+  colorsFront: z.number().int().min(0).max(8),
+  colorsBack: z.number().int().min(0).max(8),
+  bleed: z.boolean(),
+  paperId: z.number().int().positive().nullable(),
+  pressId: z.number().int().positive().nullable(),
+  operationIds: z.array(z.number().int().positive()).max(50),
+  servicesChosen: z.boolean().optional(),
+});
+const AltQuantities = z.array(z.number().int().min(1).max(10_000_000)).max(MAX_ALT_QUANTITIES);
+
 const PricingReq = z.object({
   categoryId: z.number().int().nullable(),
   quantity: z.number().int().min(0).max(10_000_000),
@@ -37,13 +52,20 @@ const PricingReq = z.object({
   isRush: z.boolean().optional(),
   customBaseCents: z.number().int().min(0).nullable().optional(),
   customerId: z.number().int().nullable().optional(),
+  print: PrintSpec.nullable().optional(),
+  altQuantities: AltQuantities.optional(),
 });
 
-export async function priceQuoteItem(input: ItemPricingRequest) {
-  return runAction(async () => {
+/** Live price of a quote line: the recommendation plus, for print work, how it runs and each press's price. */
+export type LinePriceResult = Omit<PricingResult, "production"> & { production: RunInfo | null; quantityOptions: QuantityOption[] };
+
+export async function priceQuoteItem(input: ItemPricingRequest & { altQuantities?: number[] }) {
+  return runAction(async (): Promise<LinePriceResult> => {
     const user = await requirePermission("quotes.edit");
-    const req = PricingReq.parse(input);
-    return publicResult(await priceItem(user.tenantId, req), can(user.role, "margins.view"));
+    const { altQuantities, ...req } = PricingReq.parse(input);
+    const p = await priceLine(user.tenantId, req, altQuantities);
+    const pub = publicResult({ ...p.result, pressOptions: p.pressOptions }, can(user.role, "margins.view"));
+    return { ...pub, production: p.production, quantityOptions: p.quantityOptions };
   });
 }
 
@@ -72,8 +94,9 @@ export async function quoteReorderPrice(jobId: number, quantity: number) {
     if (!job) throw new UserError("Job not found.");
     const [item] = await db.select().from(jobItems).where(and(eq(jobItems.tenantId, user.tenantId), eq(jobItems.jobId, jobId))).orderBy(asc(jobItems.sortOrder)).limit(1);
     if (!item) return { recommendedCents: null };
-    const input = (item.pricingInput ?? {}) as Partial<ItemPricingRequest>;
-    const r = await priceItem(user.tenantId, {
+    // The stored input carries the print choices (paper, press, sides, colors…), so print work re-prices here too.
+    const { altQuantities: _alt, ...input } = (item.pricingInput ?? {}) as Partial<ItemPricingRequest> & { altQuantities?: number[] };
+    const { result: r } = await priceLine(user.tenantId, {
       ...input,
       categoryId: item.categoryId,
       quantity: Math.max(1, Math.round(quantity)),
@@ -108,6 +131,8 @@ const Item = z.object({
   miles: z.number().min(0).nullable(),
   outsourcedCostCents: z.number().int().min(0).nullable(),
   customBaseCents: z.number().int().min(0).nullable(),
+  print: PrintSpec.nullable().optional(),
+  altQuantities: AltQuantities.optional(),
   priceCents: z.number().int().min(0),
   overrideReason: z.string().max(300).nullable(),
   taxable: z.boolean(),
@@ -145,15 +170,35 @@ async function checkQuoteRefs(tenantId: number, data: QuotePayload) {
     if (!l) throw new UserError("Location not found.");
   }
   const catIds = [...new Set(data.items.map((i) => i.categoryId).filter((x): x is number => x != null))];
+  const methods = new Map<number, string>();
   if (catIds.length) {
-    const found = await db.select({ id: productCategories.id }).from(productCategories).where(and(eq(productCategories.tenantId, tenantId), inArray(productCategories.id, catIds)));
+    const found = await db.select({ id: productCategories.id, method: productCategories.pricingMethod }).from(productCategories).where(and(eq(productCategories.tenantId, tenantId), inArray(productCategories.id, catIds)));
     if (found.length !== catIds.length) throw new UserError("Product category not found.");
+    for (const c of found) methods.set(c.id, c.method);
   }
-  const matIds = [...new Set(data.items.map((i) => i.materialId).filter((x): x is number => x != null))];
+  const uniq = (xs: (number | null | undefined)[]) => [...new Set(xs.filter((x): x is number => x != null))];
+  const matIds = uniq(data.items.map((i) => i.materialId));
   if (matIds.length) {
     const found = await db.select({ id: materials.id }).from(materials).where(and(eq(materials.tenantId, tenantId), inArray(materials.id, matIds)));
     if (found.length !== matIds.length) throw new UserError("Material not found.");
   }
+  // Print choices: paper, press and services must be this shop's too.
+  const paperIds = uniq(data.items.map((i) => i.print?.paperId));
+  if (paperIds.length) {
+    const found = await db.select({ id: materials.id }).from(materials).where(and(eq(materials.tenantId, tenantId), inArray(materials.id, paperIds)));
+    if (found.length !== paperIds.length) throw new UserError("Paper not found.");
+  }
+  const pressIds = uniq(data.items.map((i) => i.print?.pressId));
+  if (pressIds.length) {
+    const found = await db.select({ id: equipment.id }).from(equipment).where(and(eq(equipment.tenantId, tenantId), inArray(equipment.id, pressIds)));
+    if (found.length !== pressIds.length) throw new UserError("Press not found.");
+  }
+  const opIds = uniq(data.items.flatMap((i) => i.print?.operationIds ?? []));
+  if (opIds.length) {
+    const found = await db.select({ id: operations.id }).from(operations).where(and(eq(operations.tenantId, tenantId), inArray(operations.id, opIds)));
+    if (found.length !== opIds.length) throw new UserError("Service not found.");
+  }
+  return { methods };
 }
 
 export async function saveQuote(payload: QuotePayload) {
@@ -162,7 +207,7 @@ export async function saveQuote(payload: QuotePayload) {
     const data = Quote.parse(payload);
     const [cust] = await db.select().from(customers).where(and(eq(customers.tenantId, user.tenantId), eq(customers.id, data.customerId)));
     if (!cust) throw new UserError("Customer not found.");
-    await checkQuoteRefs(user.tenantId, data);
+    const { methods } = await checkQuoteRefs(user.tenantId, data);
     const { rules, quoteValidDays } = await getSettings(user.tenantId);
 
     // Authoritative pricing on the server.
@@ -184,9 +229,14 @@ export async function saveQuote(payload: QuotePayload) {
           isRush: data.isRush,
           customBaseCents: i.customBaseCents,
           customerId: data.customerId,
+          // Print choices only count for print-estimated categories.
+          print: i.categoryId != null && methods.get(i.categoryId) === "sheet_fed" ? (i.print ?? null) : null,
         };
-        const r = await priceItem(user.tenantId, req);
-        const { customerId: _c, ...pricingInput } = req;
+        const altQuantities = [...new Set(i.altQuantities ?? [])].filter((q) => q !== i.quantity).sort((a, b) => a - b);
+        const p = await priceLine(user.tenantId, req, altQuantities);
+        const r = p.result;
+        const { customerId: _c, ...rest } = p.req;
+        const pricingInput = { ...rest, ...(altQuantities.length ? { altQuantities } : {}) };
         return {
           categoryId: i.categoryId,
           description: i.description,
@@ -199,7 +249,7 @@ export async function saveQuote(payload: QuotePayload) {
           colors: i.colors,
           specs: i.specs,
           pricingInput,
-          pricingBreakdown: { lines: r.lines, costLines: r.costLines, warnings: r.warnings },
+          pricingBreakdown: storedBreakdown(p),
           recommendedCents: r.recommendedCents,
           priceCents: i.priceCents,
           overrideReason: i.priceCents !== r.recommendedCents ? i.overrideReason : null,
@@ -303,11 +353,18 @@ export async function sendQuote(id: number, opts: { email: string | null; messag
         ``,
         `Thank you for the opportunity. Here is your quote for "${q.title}":`,
         ``,
-        ...items.map((i) => `• ${i.description}${i.widthIn && i.heightIn ? ` (${fmtSize(i.widthIn, i.heightIn)})` : ""} — qty ${i.quantity.toLocaleString()} — ${money(i.priceCents)}`),
+        ...items.flatMap((i) => {
+          const line = `• ${i.description}${i.widthIn && i.heightIn ? ` (${fmtSize(i.widthIn, i.heightIn)})` : ""} — qty ${i.quantity.toLocaleString()} — ${money(i.priceCents)}`;
+          const choices = quantityOptionsText(i.quantity, i.priceCents, (i.pricingBreakdown as StoredBreakdown | null)?.quantityOptions);
+          return choices ? [line, `  Choose your quantity: ${choices}`] : [line];
+        }),
         ``,
         `Subtotal: ${money(q.subtotalCents)}`,
         q.taxCents ? `Sales tax: ${money(q.taxCents)}` : `Sales tax: exempt`,
         `Total: ${money(q.totalCents)}`,
+        ...(items.some((i) => quantityOptionsText(i.quantity, i.priceCents, (i.pricingBreakdown as StoredBreakdown | null)?.quantityOptions))
+          ? [``, `The total is for the quantity on each line; the other quantities are priced before tax. Just tell us which you'd like.`]
+          : []),
         q.validUntil ? `\nThis quote is valid until ${q.validUntil}.` : ``,
         q.customerNotes ? `\n${q.customerNotes}` : ``,
         opts.message ? `\n${opts.message}` : ``,

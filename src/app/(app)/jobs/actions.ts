@@ -20,6 +20,8 @@ import { getSettings } from "@/lib/settings";
 import { nextNumber } from "@/lib/tenant";
 import { hashProofToken } from "@/lib/proofs";
 import { appUrl } from "@/lib/http";
+import { priceLine, storedBreakdown } from "@/lib/quotes/pricing";
+import type { ItemPricingRequest } from "@/lib/pricing/server";
 
 const actor = (u: SessionUser) => ({ id: u.id, name: u.name, tenantId: u.tenantId });
 
@@ -362,7 +364,26 @@ export async function saveJobItem(jobId: number, itemId: number | null, fd: Form
       if (itemId) {
         const [before] = await tx.select().from(jobItems).where(and(eq(jobItems.tenantId, tenantId), eq(jobItems.id, itemId), eq(jobItems.jobId, job.id)));
         if (!before) throw new UserError("Item not found.");
-        await tx.update(jobItems).set(values).where(and(eq(jobItems.tenantId, tenantId), eq(jobItems.id, itemId)));
+        // A print-estimated line whose quantity or size changed is re-estimated (sheets, press, run info);
+        // the final price stays what the person entered. A new category drops the old estimate.
+        const printInput = (before.pricingInput ?? null) as (Partial<ItemPricingRequest> & { altQuantities?: number[] }) | null;
+        const sized = values.quantity !== before.quantity || values.widthIn !== before.widthIn || values.heightIn !== before.heightIn;
+        let estimate: Partial<typeof jobItems.$inferInsert> = {};
+        if (printInput?.print && values.categoryId !== before.categoryId) estimate = { pricingBreakdown: null };
+        else if (printInput?.print && sized) {
+          const { altQuantities: _a, customerId: _c, ...input } = printInput;
+          const req: ItemPricingRequest = { ...input, categoryId: before.categoryId, quantity: values.quantity, widthIn: values.widthIn, heightIn: values.heightIn, materialId: before.materialId, customerId: job.customerId };
+          const p = await priceLine(tenantId, req);
+          // p.req is the request as priced (with its full service list), so store that.
+          const { customerId: _cc, ...pricingInput } = p.req;
+          estimate = {
+            pricingInput,
+            pricingBreakdown: storedBreakdown(p),
+            recommendedCents: p.result.recommendedCents,
+            ...(seeCost ? {} : { estimatedCostCents: p.result.estimatedCostCents }),
+          };
+        }
+        await tx.update(jobItems).set({ ...values, ...estimate }).where(and(eq(jobItems.tenantId, tenantId), eq(jobItems.id, itemId)));
         const ch = diff(before as unknown as Record<string, unknown>, values);
         if (ch) {
           const priceChanged = "priceCents" in ch.after;

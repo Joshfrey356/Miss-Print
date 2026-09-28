@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRightCircle, Check, Copy, MoreHorizontal, Pencil, RotateCcw, Send, ThumbsDown, Archive } from "lucide-react";
+import { ArrowRightCircle, Check, Copy, MoreHorizontal, Pencil, Printer, RotateCcw, Send, ThumbsDown, Archive } from "lucide-react";
 import { Button, LinkButton } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { ConfirmDialog } from "@/components/ui/confirm";
@@ -11,7 +11,24 @@ import { useServerAction } from "@/components/use-action";
 import { archiveQuote, convertQuote, duplicateQuote, sendQuote, setQuoteOutcome } from "@/app/(app)/quotes/actions";
 import type { QuoteStatus } from "@/lib/db/schema";
 
-export function QuoteActions({ id, status, email, canEdit, canConvert, jobNumber }: { id: number; status: QuoteStatus; email: string | null; canEdit: boolean; canConvert: boolean; jobNumber: number | null }) {
+export function QuoteActions({
+  id,
+  status,
+  email,
+  canEdit,
+  canConvert,
+  canPrint = false,
+  jobNumber,
+}: {
+  id: number;
+  status: QuoteStatus;
+  email: string | null;
+  canEdit: boolean;
+  canConvert: boolean;
+  /** Printable customer copy (it shows prices). */
+  canPrint?: boolean;
+  jobNumber: number | null;
+}) {
   const router = useRouter();
   const [pending, run] = useServerAction();
   const [sending, setSending] = useState(false);
@@ -19,12 +36,23 @@ export function QuoteActions({ id, status, email, canEdit, canConvert, jobNumber
   const [archiving, setArchiving] = useState(false);
   const [emailIt, setEmailIt] = useState(!!email);
 
+  const printLink = canPrint ? (
+    <LinkButton href={`/quotes/${id}/print`} target="_blank" size="lg" aria-label="Print quote">
+      <Printer className="size-4" /> Print
+    </LinkButton>
+  ) : null;
+
   if (status === "converted")
-    return jobNumber ? (
-      <LinkButton href={`/jobs/${jobNumber}`} variant="primary" size="lg">
-        Open job MP-{jobNumber} <ArrowRightCircle className="size-4" />
-      </LinkButton>
-    ) : null;
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        {jobNumber && (
+          <LinkButton href={`/jobs/${jobNumber}`} variant="primary" size="lg">
+            Open job MP-{jobNumber} <ArrowRightCircle className="size-4" />
+          </LinkButton>
+        )}
+        {printLink}
+      </div>
+    );
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -48,6 +76,7 @@ export function QuoteActions({ id, status, email, canEdit, canConvert, jobNumber
           <Pencil className="size-4" /> Edit
         </LinkButton>
       )}
+      {!canEdit && printLink}
       {canEdit && (
         <Dropdown>
           <DropdownTrigger asChild>
@@ -69,6 +98,11 @@ export function QuoteActions({ id, status, email, canEdit, canConvert, jobNumber
             {(status === "declined" || status === "expired" || status === "accepted") && (
               <DropdownItem onSelect={() => run(() => setQuoteOutcome(id, "draft"), { success: "Reopened" })}>
                 <RotateCcw className="size-4 text-slate-400" /> Reopen as draft
+              </DropdownItem>
+            )}
+            {canPrint && (
+              <DropdownItem onSelect={() => window.open(`/quotes/${id}/print`, "_blank")}>
+                <Printer className="size-4 text-slate-400" /> Print for the customer
               </DropdownItem>
             )}
             <DropdownItem onSelect={() => run(() => duplicateQuote(id))}>

@@ -2,19 +2,54 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { AlertTriangle, ChevronDown, ChevronUp, Copy, History, Loader2, Plus, Sparkles, Trash2, Wand2 } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronUp, Copy, History, Loader2, Plus, Printer, Sparkles, Trash2, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Checkbox, Field, Input, MoneyInput, Select, Textarea } from "@/components/ui/input";
 import { CustomerPicker, type PickedCustomer } from "@/components/customer-picker";
-import { priceQuoteItem, saveQuote, similarJobs, type QuotePayload } from "@/app/(app)/quotes/actions";
+import { priceQuoteItem, saveQuote, similarJobs, type LinePriceResult, type QuotePayload } from "@/app/(app)/quotes/actions";
 import { centsToInput, fmtDate, fmtSize, jobNo, money, parseMoney, pct } from "@/lib/format";
-import type { PricingResult, FinishingOption } from "@/lib/pricing/engine";
+import type { FinishingOption } from "@/lib/pricing/engine";
+import {
+  COLOR_PRESETS,
+  colorPresetKey,
+  colorsForSides,
+  colorsShort,
+  formatQuantityList,
+  parseQuantityList,
+  productionSummary,
+  sidesOf,
+  withDefaultServices,
+  type PrintInputs,
+  type Sides,
+} from "@/lib/quotes/print-options";
 import type { SimilarJob } from "@/lib/pricing/history";
 import { cn } from "@/lib/utils";
 
-export type BuilderCategory = { id: number; name: string; method: string; finishing: Pick<FinishingOption, "key" | "label" | "basis" | "priceCents">[]; defaultNeedsInstall: boolean; defaultLocationId: number | null; notes: string | null };
+/** A print-estimated (sheet_fed) category's choices. Names only: costs never reach the browser. */
+export type BuilderPrint = {
+  papers: Opt[];
+  presses: (Opt & { kind: string })[];
+  defaultPaperId: number | null;
+  /** Services that start ticked for this category (they can be removed). */
+  defaultServiceIds: number[];
+  defaultPages: number;
+  defaultColorsFront: number;
+  defaultColorsBack: number;
+  /** Whether the bleed box starts ticked (e.g. business cards, postcards). */
+  defaultBleed: boolean;
+};
+export type BuilderCategory = {
+  id: number;
+  name: string;
+  method: string;
+  finishing: Pick<FinishingOption, "key" | "label" | "basis" | "priceCents">[];
+  defaultNeedsInstall: boolean;
+  defaultLocationId: number | null;
+  notes: string | null;
+  print: BuilderPrint | null;
+};
 export type BuilderMaterial = { id: number; name: string; unit: string; kind: string };
 type Opt = { id: number; name: string };
 
@@ -42,6 +77,19 @@ type Line = {
   overrideReason: string;
   taxable: boolean;
   showMore: boolean;
+  /** Extra quantities to quote, as typed ("500, 2,500"). */
+  altQty: string;
+  // ---- print estimating (sheet_fed categories) ----
+  sides: Sides;
+  pageCount: string;
+  colorsFront: number;
+  colorsBack: number;
+  customColors: boolean;
+  bleed: boolean;
+  paperId: number | null;
+  pressId: number | null;
+  /** Every service on the line (the category's defaults start ticked). */
+  operationIds: number[];
 };
 
 export type BuilderInitial = {
@@ -89,15 +137,79 @@ const toIn = (s: string, unit: "in" | "ft") => {
 };
 
 function blankLine(categoryId: number | null = null): Line {
-  return { key: newKey(), categoryId, description: "", quantity: "1", unit: "ft", width: "", height: "", materialId: null, material: "", finishingKeys: [], finishingExtra: "", colors: "", specs: "", designHours: "", installHours: "", miles: "", outsourced: "", customBase: "", price: "", priceTouched: false, overrideReason: "", taxable: true, showMore: false };
+  return {
+    key: newKey(),
+    categoryId,
+    description: "",
+    quantity: "1",
+    unit: "ft",
+    width: "",
+    height: "",
+    materialId: null,
+    material: "",
+    finishingKeys: [],
+    finishingExtra: "",
+    colors: "",
+    specs: "",
+    designHours: "",
+    installHours: "",
+    miles: "",
+    outsourced: "",
+    customBase: "",
+    price: "",
+    priceTouched: false,
+    overrideReason: "",
+    taxable: true,
+    showMore: false,
+    altQty: "",
+    sides: "one",
+    pageCount: "8",
+    colorsFront: 4,
+    colorsBack: 0,
+    customColors: false,
+    bleed: false,
+    paperId: null,
+    pressId: null,
+    operationIds: [],
+  };
 }
 
-function fromInitial(i: BuilderInitial["items"][number], cats: BuilderCategory[]): Line {
+/** Print fields for a line switched to a print-estimated category: the category's defaults. */
+function printDefaults(p: BuilderPrint): Partial<Line> {
+  const pages = Math.max(1, p.defaultPages);
+  return {
+    sides: sidesOf(pages),
+    pageCount: pages > 2 ? String(pages) : "8",
+    ...colorsFromDefaults(pages, p.defaultColorsFront, p.defaultColorsBack),
+    customColors: false,
+    bleed: p.defaultBleed,
+    paperId: p.defaultPaperId,
+    pressId: null,
+    operationIds: [...p.defaultServiceIds],
+  };
+}
+const colorsFromDefaults = (pages: number, front: number, back: number) => {
+  const c = colorsForSides(pages, front, back);
+  return { colorsFront: c.front, colorsBack: c.back };
+};
+
+const pagesOf = (l: Pick<Line, "sides" | "pageCount">) => (l.sides === "one" ? 1 : l.sides === "two" ? 2 : Math.max(3, Math.round(n(l.pageCount) ?? 8)));
+
+/** The print choices sent to the server for a sheet_fed line. */
+function printOf(l: Line): PrintInputs {
+  return { pages: pagesOf(l), colorsFront: l.colorsFront, colorsBack: l.colorsBack, bleed: l.bleed, paperId: l.paperId, pressId: l.pressId, operationIds: l.operationIds, servicesChosen: true };
+}
+
+function fromInitial(i: BuilderInitial["items"][number], cats: BuilderCategory[], services: Opt[]): Line {
   const pi = (i.pricingInput ?? {}) as Record<string, unknown>;
   const feet = !!i.widthIn && !!i.heightIn && i.widthIn % 12 === 0 && i.heightIn % 12 === 0 && i.widthIn >= 24;
   const keys = (pi.finishingKeys as string[] | undefined) ?? [];
   const cat = cats.find((c) => c.id === i.categoryId);
-  const labels = new Set(keys.map((k) => cat?.finishing.find((f) => f.key === k)?.label).filter(Boolean));
+  const stored = cat?.print ? ((pi.print as PrintInputs | null | undefined) ?? null) : null;
+  // Quotes saved before default services became removable: their defaults were implied, so tick them.
+  const pr = stored ? withDefaultServices(stored, cat!.print!.defaultServiceIds) : null;
+  // Service names are added to the finishing text on save; don't show them twice.
+  const labels = new Set([...keys.map((k) => cat?.finishing.find((f) => f.key === k)?.label), ...(cat?.print ? services.map((s) => s.name) : [])].filter(Boolean));
   const extra = (i.finishing ?? "")
     .split(",")
     .map((s) => s.trim())
@@ -126,6 +238,21 @@ function fromInitial(i: BuilderInitial["items"][number], cats: BuilderCategory[]
     priceTouched: i.priceCents !== i.recommendedCents,
     overrideReason: i.overrideReason ?? "",
     taxable: i.taxable,
+    altQty: formatQuantityList(Array.isArray(pi.altQuantities) ? (pi.altQuantities as number[]) : []),
+    ...(cat?.print && !pr ? printDefaults(cat.print) : {}),
+    ...(pr
+      ? {
+          sides: sidesOf(pr.pages),
+          pageCount: pr.pages > 2 ? String(pr.pages) : "8",
+          colorsFront: pr.colorsFront,
+          colorsBack: pr.colorsBack,
+          customColors: colorPresetKey(pr.pages, pr.colorsFront, pr.colorsBack) === "custom",
+          bleed: pr.bleed,
+          paperId: pr.paperId,
+          pressId: pr.pressId,
+          operationIds: pr.operationIds,
+        }
+      : {}),
   };
 }
 
@@ -133,6 +260,7 @@ export function QuoteBuilder({
   initial,
   categories,
   materials,
+  services,
   salespeople,
   locations,
   canSeeCost,
@@ -142,6 +270,8 @@ export function QuoteBuilder({
   initial: BuilderInitial;
   categories: BuilderCategory[];
   materials: BuilderMaterial[];
+  /** Bindery & services for print-estimated lines (names only). */
+  services: Opt[];
   salespeople: Opt[];
   locations: Opt[];
   canSeeCost: boolean;
@@ -160,8 +290,8 @@ export function QuoteBuilder({
   const [dueDate, setDueDate] = useState(initial.dueDate ?? "");
   const [internalNotes, setInternalNotes] = useState(initial.internalNotes ?? "");
   const [customerNotes, setCustomerNotes] = useState(initial.customerNotes ?? "");
-  const [lines, setLines] = useState<Line[]>(() => (initial.items.length ? initial.items.map((i) => fromInitial(i, categories)) : [blankLine()]));
-  const [results, setResults] = useState<Record<string, PricingResult | undefined>>({});
+  const [lines, setLines] = useState<Line[]>(() => (initial.items.length ? initial.items.map((i) => fromInitial(i, categories, services)) : [blankLine()]));
+  const [results, setResults] = useState<Record<string, LinePriceResult | undefined>>({});
   const [pricing, setPricing] = useState<Record<string, boolean>>({});
   const [focus, setFocus] = useState<string>(lines[0]!.key);
   const [saving, startSave] = useTransition();
@@ -185,6 +315,7 @@ export function QuoteBuilder({
         const id = (reqIds.current[l.key] ?? 0) + 1;
         reqIds.current[l.key] = id;
         setPricing((p) => ({ ...p, [l.key]: true }));
+        const isPrint = !!categories.find((c) => c.id === l.categoryId)?.print;
         const r = await priceQuoteItem({
           categoryId: l.categoryId,
           quantity: Math.max(0, Math.round(n(l.quantity) ?? 0)),
@@ -201,6 +332,8 @@ export function QuoteBuilder({
           isRush,
           customBaseCents: parseMoney(l.customBase),
           customerId: customer?.id ?? null,
+          print: isPrint ? printOf(l) : null,
+          altQuantities: parseQuantityList(l.altQty, Math.round(n(l.quantity) ?? 0)),
         });
         if (reqIds.current[l.key] !== id) return;
         setPricing((p) => ({ ...p, [l.key]: false }));
@@ -209,10 +342,14 @@ export function QuoteBuilder({
         if (!l.priceTouched && r.data) setLines((ls) => ls.map((x) => (x.key === l.key && !x.priceTouched ? { ...x, price: centsToInput(r.data!.recommendedCents) } : x)));
       }, 250);
     },
-    [needsDesign, needsInstall, isRush, customer?.id],
+    [needsDesign, needsInstall, isRush, customer?.id, categories],
   );
 
-  const pricingSig = lines.map((l) => [l.categoryId, l.quantity, l.width, l.height, l.unit, l.materialId, l.finishingKeys.join(), l.designHours, l.installHours, l.miles, l.outsourced, l.customBase].join("|")).join("~");
+  const pricingSig = lines
+    .map((l) =>
+      [l.categoryId, l.quantity, l.width, l.height, l.unit, l.materialId, l.finishingKeys.join(), l.designHours, l.installHours, l.miles, l.outsourced, l.customBase, l.altQty, pagesOf(l), l.colorsFront, l.colorsBack, l.bleed, l.paperId, l.pressId, l.operationIds.join()].join("|"),
+    )
+    .join("~");
   useEffect(() => {
     lines.forEach((l, i) => priceLine(l, i));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -281,17 +418,24 @@ export function QuoteBuilder({
       items: lines.map((l) => {
         const cat = categories.find((c) => c.id === l.categoryId);
         const labels = l.finishingKeys.map((k) => cat?.finishing.find((f) => f.key === k)?.label).filter(Boolean) as string[];
+        const quantity = Math.max(1, Math.round(n(l.quantity) ?? 1));
+        const pr = cat?.print ? printOf(l) : null;
+        // Print lines: the paper is the material; the services go in the finishing text.
+        const paper = pr ? cat!.print!.papers.find((p) => p.id === pr.paperId) : undefined;
+        const serviceNames = pr ? services.filter((s) => pr.operationIds.includes(s.id)).map((s) => s.name) : [];
         return {
           categoryId: l.categoryId,
           description: l.description.trim() || cat?.name || "Custom item",
-          quantity: Math.max(1, Math.round(n(l.quantity) ?? 1)),
+          quantity,
           widthIn: toIn(l.width, l.unit),
           heightIn: toIn(l.height, l.unit),
-          materialId: l.materialId,
-          material: l.material || materials.find((m) => m.id === l.materialId)?.name || null,
-          finishing: [...labels, l.finishingExtra.trim()].filter(Boolean).join(", ") || null,
+          materialId: pr ? (paper?.id ?? null) : l.materialId,
+          material: pr ? (paper?.name ?? null) : l.material || materials.find((m) => m.id === l.materialId)?.name || null,
+          finishing: [...labels, ...serviceNames, l.finishingExtra.trim()].filter(Boolean).join(", ") || null,
           finishingKeys: l.finishingKeys,
-          colors: l.colors || null,
+          print: pr,
+          altQuantities: parseQuantityList(l.altQty, quantity),
+          colors: pr ? colorsShort(pr.pages, pr.colorsFront, pr.colorsBack) : l.colors || null,
           specs: l.specs || null,
           designHours: n(l.designHours),
           installHours: n(l.installHours),
@@ -373,7 +517,7 @@ export function QuoteBuilder({
           const final = parseMoney(l.price) ?? 0;
           const overridden = l.priceTouched && final !== rec && rec > 0;
           const margin = final > 0 && r && r.estimatedCostCents > 0 ? (final - r.estimatedCostCents) / final : null;
-          const sized = cat?.method === "per_sqft" || !!l.width || !!l.height;
+          const sized = cat?.method === "per_sqft" || !!cat?.print || !!l.width || !!l.height;
           return (
             <Card key={l.key} className={cn(focus === l.key && lines.length > 1 && "ring-2 ring-brand-200")} onFocusCapture={() => setFocus(l.key)} onClick={() => setFocus(l.key)}>
               <CardHeader
@@ -394,7 +538,7 @@ export function QuoteBuilder({
                       onChange={(e) => {
                         const id = e.target.value ? Number(e.target.value) : null;
                         const c = categories.find((x) => x.id === id);
-                        update(l.key, { categoryId: id, finishingKeys: [], unit: c?.method === "per_sqft" && !["posters", "decals"].includes(c.name.toLowerCase()) ? "ft" : "in" });
+                        update(l.key, { categoryId: id, finishingKeys: [], unit: c?.method === "per_sqft" && !["posters", "decals"].includes(c.name.toLowerCase()) ? "ft" : "in", ...(c?.print ? printDefaults(c.print) : {}) });
                         if (c?.defaultNeedsInstall && idx === 0) setNeedsInstall(true);
                         if (c?.defaultLocationId && !locationId) setLocationId(c.defaultLocationId);
                       }}
@@ -413,7 +557,7 @@ export function QuoteBuilder({
                   {sized && (
                     <div className="col-span-2 sm:col-span-2">
                       <label className="mb-1.5 flex items-center justify-between text-sm font-medium text-slate-700">
-                        Size (W × H)
+                        {cat?.print ? "Finished size (W × H)" : "Size (W × H)"}
                         <span className="inline-flex rounded-md border border-slate-200 p-0.5 text-xs">
                           {(["ft", "in"] as const).map((u) => (
                             <button
@@ -445,7 +589,9 @@ export function QuoteBuilder({
                 <Field label="Description">
                   <Input value={l.description} onChange={(e) => update(l.key, { description: e.target.value })} placeholder={cat ? `e.g. ${exampleFor(cat.name)}` : "Describe the item"} />
                 </Field>
+                {cat?.print && <PrintFields line={l} print={cat.print} services={services} result={r} onChange={(patch) => update(l.key, patch)} />}
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {!cat?.print && (
                   <Field label="Material">
                     <Select
                       value={l.materialId ?? (l.material ? "other" : "")}
@@ -465,7 +611,8 @@ export function QuoteBuilder({
                     </Select>
                     {l.materialId == null && (l.material || false) !== false && <Input className="mt-2" value={l.material} onChange={(e) => update(l.key, { material: e.target.value })} placeholder="Material" />}
                   </Field>
-                  <Field label="Finishing & notes">
+                  )}
+                  <Field label="Finishing & notes" className={cn(cat?.print && "sm:col-span-2")}>
                     <Input value={l.finishingExtra} onChange={(e) => update(l.key, { finishingExtra: e.target.value })} placeholder="e.g. laminate, H-stakes, trim to size" />
                   </Field>
                 </div>
@@ -498,9 +645,11 @@ export function QuoteBuilder({
                 </button>
                 {l.showMore && (
                   <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                    <Field label="Colors">
-                      <Input value={l.colors} onChange={(e) => update(l.key, { colors: e.target.value })} placeholder="4/4, PMS 286" />
-                    </Field>
+                    {!cat?.print && (
+                      <Field label="Colors">
+                        <Input value={l.colors} onChange={(e) => update(l.key, { colors: e.target.value })} placeholder="4/4, PMS 286" />
+                      </Field>
+                    )}
                     {idx === 0 && needsDesign && (
                       <Field label="Design hours">
                         <Input inputMode="decimal" value={l.designHours} onChange={(e) => update(l.key, { designHours: e.target.value })} placeholder="default" />
@@ -558,6 +707,12 @@ export function QuoteBuilder({
                       </div>
                     )}
                   </div>
+                  {r?.production && (
+                    <p className="mt-3 flex items-start gap-1.5 text-sm text-slate-600">
+                      <Printer className="mt-0.5 size-4 shrink-0 text-slate-400" /> {productionSummary(r.production)}
+                    </p>
+                  )}
+                  <AltQuantities line={l} result={r} onChange={(patch) => update(l.key, patch)} />
                   {overridden && (
                     <Input className="mt-3" value={l.overrideReason} onChange={(e) => update(l.key, { overrideReason: e.target.value })} placeholder="Why the different price? (optional — e.g. repeat customer, matched last order)" />
                   )}
@@ -605,7 +760,9 @@ export function QuoteBuilder({
         <div className="flex gap-2">
           <Button
             onClick={() => {
-              const l = blankLine(lines[lines.length - 1]?.categoryId ?? null);
+              const catId = lines[lines.length - 1]?.categoryId ?? null;
+              const p = categories.find((c) => c.id === catId)?.print;
+              const l = { ...blankLine(catId), ...(p ? { unit: "in" as const, ...printDefaults(p) } : {}) };
               setLines((ls) => [...ls, l]);
               setFocus(l.key);
             }}
@@ -741,6 +898,164 @@ export function QuoteBuilder({
           </CardBody>
         </Card>
       </aside>
+    </div>
+  );
+}
+
+/** Sides, ink, bleed, paper, press and services for a print-estimated line. */
+function PrintFields({ line: l, print, services, result, onChange }: { line: Line; print: BuilderPrint; services: Opt[]; result: LinePriceResult | undefined; onChange: (patch: Partial<Line>) => void }) {
+  const pages = pagesOf(l);
+  const presets = COLOR_PRESETS[l.sides];
+  const presetKey = l.customColors ? "custom" : colorPresetKey(pages, l.colorsFront, l.colorsBack);
+  const options = result?.pressOptions ?? [];
+  const priced = !!result?.production;
+  const papers = l.paperId && !print.papers.some((p) => p.id === l.paperId) ? [...print.papers, { id: l.paperId, name: "(paper no longer offered)" }] : print.papers;
+  const setSides = (sides: Sides, pageCount = l.pageCount) => {
+    const c = colorsForSides(pagesOf({ sides, pageCount }), l.colorsFront, l.colorsBack);
+    onChange({ sides, pageCount, colorsFront: c.front, colorsBack: c.back });
+  };
+  const colorNum = (v: string) => Math.max(0, Math.min(8, Math.round(n(v) ?? 0)));
+  return (
+    <div className="space-y-4 rounded-xl border border-slate-200 p-4">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-6">
+        <Field label="Sides / pages" className="col-span-2 sm:col-span-3">
+          <Select value={l.sides} onChange={(e) => setSides(e.target.value as Sides)}>
+            <option value="one">One-sided</option>
+            <option value="two">Two-sided</option>
+            <option value="multi">Multi-page (booklet)</option>
+          </Select>
+          {l.sides === "multi" && (
+            <div className="mt-2 flex items-center gap-2 text-sm text-slate-600">
+              <Input inputMode="numeric" className="w-24" value={l.pageCount} onChange={(e) => setSides("multi", e.target.value)} aria-label="Number of pages" /> pages
+            </div>
+          )}
+        </Field>
+        <Field label="Ink colors" className="col-span-2 sm:col-span-3">
+          <Select
+            value={presetKey}
+            onChange={(e) => {
+              const p = presets.find((x) => x.key === e.target.value);
+              if (p) onChange({ colorsFront: p.front, colorsBack: l.sides === "one" ? 0 : l.sides === "multi" ? p.front : p.back, customColors: false });
+              else onChange({ customColors: true });
+            }}
+          >
+            {presets.map((p) => (
+              <option key={p.key} value={p.key}>
+                {p.label}
+              </option>
+            ))}
+            <option value="custom">Custom…</option>
+          </Select>
+          {presetKey === "custom" && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+              <Input inputMode="numeric" className="w-16" value={l.colorsFront} onChange={(e) => onChange({ colorsFront: colorNum(e.target.value), ...(l.sides === "multi" ? { colorsBack: colorNum(e.target.value) } : {}) })} aria-label="Front colors" />
+              {l.sides === "two" ? (
+                <>
+                  front
+                  <Input inputMode="numeric" className="w-16" value={l.colorsBack} onChange={(e) => onChange({ colorsBack: colorNum(e.target.value) })} aria-label="Back colors" /> back
+                </>
+              ) : (
+                "colors"
+              )}
+            </div>
+          )}
+        </Field>
+        <Field label="Paper" className="col-span-2 sm:col-span-3" hint={print.papers.length ? undefined : "No paper is set up for this product yet — add it in Settings → Paper & Stock."}>
+          <Select value={l.paperId ?? ""} onChange={(e) => onChange({ paperId: e.target.value ? Number(e.target.value) : null })}>
+            {!l.paperId && <option value="">Choose…</option>}
+            {papers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Press" className="col-span-2 sm:col-span-3">
+          <Select value={l.pressId ?? ""} onChange={(e) => onChange({ pressId: e.target.value ? Number(e.target.value) : null })}>
+            <option value="">Best price (automatic)</option>
+            {print.presses.map((p) => {
+              const o = options.find((x) => x.pressId === p.id);
+              return (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                  {o ? ` — ${money(o.priceCents)}` : priced ? " — can't run this job" : ""}
+                </option>
+              );
+            })}
+          </Select>
+        </Field>
+      </div>
+      {options.length > 1 && (
+        <p className="text-sm text-slate-500">
+          Printing price on each press:{" "}
+          {options.map((o, i) => (
+            <span key={o.pressId}>
+              {i > 0 && " · "}
+              <span className={cn(o.pressId === result?.production?.pressId && "font-medium text-slate-800")}>
+                {o.pressName} <span className="tabular">{money(o.priceCents)}</span>
+              </span>
+              {i === 0 && " (best)"}
+            </span>
+          ))}
+        </p>
+      )}
+      <Checkbox label="Bleed" hint="Ink runs off the edge — pieces are printed oversize and trimmed" checked={l.bleed} onChange={(e) => onChange({ bleed: e.target.checked })} />
+      {services.length > 0 && (
+        <div>
+          <p className="mb-1.5 text-sm font-medium text-slate-700">Bindery & services</p>
+          <div className="flex flex-wrap gap-2">
+            {services.map((sv) => {
+              const on = l.operationIds.includes(sv.id);
+              return (
+                <button
+                  type="button"
+                  key={sv.id}
+                  onClick={() => onChange({ operationIds: on ? l.operationIds.filter((x) => x !== sv.id) : [...l.operationIds, sv.id] })}
+                  className={cn("rounded-full border px-3 py-1.5 text-sm font-medium", on ? "border-brand-500 bg-brand-50 text-brand-700" : "border-slate-200 text-slate-600 hover:bg-slate-50")}
+                >
+                  {on ? "✓ " : "+ "}
+                  {sv.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** "Also quote 250 / 500 / 1,000": extra quantities priced for the customer to choose from. */
+function AltQuantities({ line: l, result, onChange }: { line: Line; result: LinePriceResult | undefined; onChange: (patch: Partial<Line>) => void }) {
+  const main = Math.round(n(l.quantity) ?? 0);
+  const wanted = parseQuantityList(l.altQty, main);
+  const priced = (result?.quantityOptions ?? []).filter((o) => wanted.includes(o.quantity));
+  return (
+    <div className="mt-3">
+      <label className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
+        Also quote
+        <Input className="h-9 w-48" value={l.altQty} onChange={(e) => onChange({ altQty: e.target.value })} placeholder="e.g. 500, 2,500" aria-label="Other quantities to quote" />
+        <span className="text-xs text-slate-400">other quantities for the customer to choose from</span>
+      </label>
+      {priced.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {priced.map((o) => (
+            <span key={o.quantity} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-sm">
+              <span className="tabular">
+                {o.quantity.toLocaleString()} for <strong className="font-semibold text-slate-900">{money(o.recommendedCents)}</strong>
+              </span>
+              <button
+                type="button"
+                className="text-xs font-medium text-brand-600 hover:underline"
+                title="Make this the main quantity"
+                onClick={() => onChange({ quantity: String(o.quantity), altQty: formatQuantityList([...wanted.filter((q) => q !== o.quantity), ...(main > 0 ? [main] : [])].sort((a, b) => a - b)), priceTouched: false, overrideReason: "" })}
+              >
+                Use this
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

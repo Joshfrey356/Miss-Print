@@ -20,6 +20,9 @@ import { jobNo, today } from "@/lib/format";
 import { STATUS_LABELS, WORK_STATUSES, afterApproval } from "@/lib/jobs/workflow";
 import { taxFor } from "@/lib/pricing/engine";
 import { nextNumber } from "@/lib/tenant";
+import type { ItemPricingRequest } from "@/lib/pricing/server";
+import { priceLine, storedBreakdown } from "@/lib/quotes/pricing";
+import type { StoredBreakdown } from "@/lib/quotes/print-options";
 
 /** Who is doing it. The shop comes with them: everything they touch belongs to it. */
 export type Actor = { id: number; name: string; tenantId: number };
@@ -180,6 +183,8 @@ export async function convertQuoteToJob(quoteId: number, actor: Actor): Promise<
           colors: i.colors,
           specs: i.specs,
           pricingInput: i.pricingInput,
+          // The estimate travels with the job: how to run it (press, paper, sheets) shows on the ticket.
+          pricingBreakdown: i.pricingBreakdown,
           recommendedCents: i.recommendedCents,
           priceCents: i.priceCents,
           overrideReason: i.overrideReason,
@@ -258,11 +263,28 @@ export async function reorderJob(sourceJobId: number, opts: ReorderOptions, acto
       .returning();
 
     const qtyFactor = !opts.sameQuantity && opts.quantity && items.length === 1 && items[0]!.quantity > 0 ? opts.quantity / items[0]!.quantity : 1;
+    const qtyOf = (i: (typeof items)[number]) => (!opts.sameQuantity && opts.quantity && items.length === 1 ? opts.quantity : i.quantity);
+    // Print-estimated lines are re-estimated with today's paper, presses and services (sheets change with
+    // the quantity), the same way the reorder dialog's recommended price is worked out.
+    const repriced = await Promise.all(
+      items.map(async (i) => {
+        const { altQuantities: _a, ...input } = (i.pricingInput ?? {}) as Partial<ItemPricingRequest> & { altQuantities?: number[] };
+        if (!input.print) return null;
+        const req: ItemPricingRequest = { ...input, categoryId: i.categoryId, quantity: qtyOf(i), widthIn: i.widthIn, heightIn: i.heightIn, materialId: i.materialId, customerId: src.customerId, needsDesign: false };
+        const p = await priceLine(tenantId, req);
+        if (!p.production) return null;
+        const { customerId: _c, ...pricingInput } = p.req;
+        return { pricingInput, pricingBreakdown: storedBreakdown(p), recommendedCents: p.result.recommendedCents, estimatedCostCents: p.result.estimatedCostCents };
+      }),
+    );
     if (items.length)
       await tx.insert(jobItems).values(
         items.map((i, idx) => {
-          const qty = !opts.sameQuantity && opts.quantity && items.length === 1 ? opts.quantity : i.quantity;
-          const price = idx === 0 && opts.priceCents != null ? opts.priceCents : Math.round(i.priceCents * qtyFactor);
+          const qty = qtyOf(i);
+          const rp = repriced[idx];
+          const price =
+            idx === 0 && opts.priceCents != null ? opts.priceCents : rp && qty !== i.quantity ? rp.recommendedCents : Math.round(i.priceCents * qtyFactor);
+          const { quantityOptions: _q, ...breakdown } = (i.pricingBreakdown ?? {}) as StoredBreakdown;
           return {
             tenantId,
             jobId: job!.id,
@@ -276,11 +298,12 @@ export async function reorderJob(sourceJobId: number, opts: ReorderOptions, acto
             finishing: i.finishing,
             colors: i.colors,
             specs: i.specs,
-            pricingInput: i.pricingInput,
-            recommendedCents: i.recommendedCents,
+            pricingInput: rp?.pricingInput ?? i.pricingInput,
+            pricingBreakdown: rp?.pricingBreakdown ?? (i.pricingBreakdown ? breakdown : null),
+            recommendedCents: rp?.recommendedCents ?? i.recommendedCents,
             priceCents: price,
             overrideReason: price !== i.priceCents ? `Reorder of ${jobNo(src.number)} (was $${(i.priceCents / 100).toFixed(2)})` : null,
-            estimatedCostCents: Math.round(i.estimatedCostCents * qtyFactor),
+            estimatedCostCents: rp?.estimatedCostCents ?? Math.round(i.estimatedCostCents * qtyFactor),
             taxable: i.taxable,
             sortOrder: i.sortOrder,
           };

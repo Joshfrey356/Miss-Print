@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { AlertTriangle, Building2, CalendarClock, Clock } from "lucide-react";
+import { AlertTriangle, Building2, CalendarClock, Clock, Printer } from "lucide-react";
 import { requirePagePermission } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { getQuoteDetail, FOLLOWUP_DAYS } from "@/lib/quotes/queries";
@@ -10,6 +10,7 @@ import { QuoteActions } from "@/components/quotes/quote-actions";
 import { HistoryPanel } from "@/components/jobs/detail/history-panel";
 import { fmtDate, fmtSize, money, pct, quoteNo, timeAgo, today } from "@/lib/format";
 import { marginOf } from "@/lib/pricing/engine";
+import { breakdownForRole, productionSummary, quantityChoices } from "@/lib/quotes/print-options";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   return { title: `Quote ${(await params).id}` };
@@ -53,7 +54,7 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
             {d.salesperson && <span>Sales: {d.salesperson}</span>}
           </div>
         </div>
-        <QuoteActions id={q.id} status={q.status} email={d.contact?.email ?? d.customer.email} canEdit={can(user.role, "quotes.edit")} canConvert={can(user.role, "jobs.create")} jobNumber={d.jobNumber} />
+        <QuoteActions id={q.id} status={q.status} email={d.contact?.email ?? d.customer.email} canEdit={can(user.role, "quotes.edit")} canConvert={can(user.role, "jobs.create")} canPrint={showMoney} jobNumber={d.jobNumber} />
       </div>
 
       {q.status === "sent" && daysSinceSent != null && daysSinceSent >= FOLLOWUP_DAYS && (
@@ -72,13 +73,31 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
           <Card>
             <CardHeader title="Items" />
             <CardBody className="divide-y divide-slate-100 py-0">
-              {d.items.map(({ item: i, category }) => (
+              {d.items.map(({ item: i, category }) => {
+                const pb = breakdownForRole(i.pricingBreakdown, showMoney, showCost);
+                const choices = showMoney && pb?.quantityOptions?.length ? quantityChoices(i.quantity, i.priceCents, pb.quantityOptions) : [];
+                return (
                 <div key={i.id} className="flex gap-4 py-4">
                   <div className="min-w-0 flex-1">
                     <p className="font-medium text-slate-900">{i.description}</p>
                     <p className="mt-0.5 text-sm text-slate-600">
-                      {[category, `Qty ${i.quantity.toLocaleString()}`, fmtSize(i.widthIn, i.heightIn), i.material, i.finishing].filter(Boolean).join(" · ")}
+                      {[category, `Qty ${i.quantity.toLocaleString()}`, fmtSize(i.widthIn, i.heightIn), i.material, i.colors, i.finishing].filter(Boolean).join(" · ")}
                     </p>
+                    {pb?.production && (
+                      <p className="mt-1 flex items-start gap-1.5 text-sm text-slate-500">
+                        <Printer className="mt-0.5 size-4 shrink-0 text-slate-400" /> {productionSummary(pb.production)}
+                      </p>
+                    )}
+                    {choices.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {choices.map((c) => (
+                          <span key={c.quantity} className={`tabular rounded-lg border px-2.5 py-1 text-sm ${c.main ? "border-brand-300 bg-brand-50 text-brand-800" : "border-slate-200 text-slate-700"}`}>
+                            {c.quantity.toLocaleString()} for <strong className="font-semibold">{money(c.cents)}</strong>
+                            {c.main && <span className="text-xs text-brand-600"> · quoted</span>}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     {i.specs && <p className="mt-1 whitespace-pre-line text-sm text-slate-500">{i.specs}</p>}
                     {showMoney && i.priceCents !== i.recommendedCents && (
                       <p className="mt-1 text-xs text-amber-700">
@@ -94,7 +113,8 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
                     </div>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </CardBody>
             {showMoney && (
               <div className="border-t border-slate-100 px-5 py-4">

@@ -21,7 +21,6 @@ export function getIntegrationStatuses(company: { name: string; email: string })
   } catch {
     storage = (process.env.STORAGE_DRIVER ?? "local").toLowerCase();
   }
-  const accounting = (process.env.ACCOUNTING_PROVIDER ?? "none").toLowerCase();
   const ai = (process.env.AI_PROVIDER ?? "none").toLowerCase();
 
   const emailLive = email === "resend" && set("RESEND_API_KEY");
@@ -58,28 +57,12 @@ export function getIntegrationStatuses(company: { name: string; email: string })
       ],
     },
     {
-      key: "accounting",
-      name: "Accounting (QuickBooks)",
-      what: "QuickBooks stays the accounting record. This app would send invoices and payments to it.",
-      state: accounting === "quickbooks" && set("QUICKBOOKS_CLIENT_ID") ? "connected" : "planned",
-      stateLabel: accounting === "quickbooks" && set("QUICKBOOKS_CLIENT_ID") ? "Set up" : "Not connected — planned for Phase 3",
-      details: ["Until then, enter invoices into QuickBooks as you do today."],
-    },
-    {
       key: "sms",
       name: "Text messages (Twilio)",
       what: "Text customers when their order is ready for pickup.",
       state: "planned",
       stateLabel: "Not connected",
       details: ["Not set up yet."],
-    },
-    {
-      key: "payments",
-      name: "Online payments (Stripe)",
-      what: "Let customers pay invoices online by card.",
-      state: "planned",
-      stateLabel: "Not connected",
-      details: ["Not set up yet. Record card, cash and check payments by hand in Money."],
     },
     {
       key: "ai",

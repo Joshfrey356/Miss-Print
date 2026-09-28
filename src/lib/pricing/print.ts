@@ -79,6 +79,8 @@ export type PrintConfig = {
   defaultPages?: number;
   defaultColorsFront?: number;
   defaultColorsBack?: number;
+  /** Does work in this category usually bleed? (pre-ticks "bleed" on new quote lines) */
+  defaultBleed?: boolean;
   /** Bleed added on each edge when the design bleeds (default 1/8"). */
   bleedIn?: number;
   /** Space between pieces on the sheet (default 0 without bleed). */
