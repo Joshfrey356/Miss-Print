@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { forbidden, sameOrigin } from "@/lib/http";
 import { UserError } from "@/lib/actions";
-import { getPortalSession } from "@/lib/portal/session";
+import { getPortalSession, PREVIEW_REFUSED } from "@/lib/portal/session";
 import { getPortalSettings } from "@/lib/portal/settings";
 import { portalAllows } from "@/lib/portal/config";
 import { MAX_PORTAL_FILES, savePortalUpload } from "@/lib/portal/service";
@@ -14,6 +14,7 @@ export async function POST(req: Request) {
   if (!sameOrigin(req)) return forbidden();
   const s = await getPortalSession();
   if (!s) return NextResponse.json({ error: "You've been signed out. Please sign in again." }, { status: 401 });
+  if (s.previewBy) return NextResponse.json({ error: PREVIEW_REFUSED }, { status: 403 });
   if (!portalAllows(await getPortalSettings(s.tenantId), "uploads")) return NextResponse.json({ error: "Uploading files isn't available. Please email them to us instead." }, { status: 403 });
   const fd = await req.formData();
   const jobId = fd.get("jobId") ? Number(fd.get("jobId")) : null;

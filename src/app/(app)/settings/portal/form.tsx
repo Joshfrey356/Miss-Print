@@ -43,7 +43,7 @@ export function PortalSettingsForm({ settings, address, stripeConnected }: { set
               </a>
             </div>
             <p className="mt-1.5 text-sm text-slate-500">
-              Put it on your website or in your email signature. Customers sign in with the email on their customer record (or a contact&apos;s email) — we email them a sign-in link, no password. You can also invite people from a customer&apos;s page.
+              Put it on your website or in your email signature. Customers sign in with the email on their customer record (or a contact&apos;s email) — we email them a sign-in link, no password. You can also invite people from a customer&apos;s page. To see it yourself, open any customer and press <strong>Preview portal</strong> (your staff email can&apos;t sign in here).
             </p>
           </div>
           <div>

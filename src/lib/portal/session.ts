@@ -4,7 +4,7 @@ import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { and, eq, gt, inArray, isNull } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { customerContacts, customers, portalSessions, tenants } from "@/lib/db/schema";
+import { customerContacts, customers, portalSessions, tenants, users } from "@/lib/db/schema";
 import { UserError } from "@/lib/actions";
 import { getPortalSettings } from "./settings";
 import { hashPortalToken, PORTAL_COOKIE, portalCookieHeaders, readCookieTokens, sessionTouch, writeCookieTokens } from "./tokens";
@@ -24,6 +24,8 @@ export type PortalSession = {
   name: string;
   customerName: string;
   shopName: string;
+  /** A staff member previewing what this customer sees: read-only, every action is refused. */
+  previewBy: { id: number; name: string } | null;
 };
 
 /**
@@ -49,22 +51,39 @@ const getCookieAccounts = cache(async (): Promise<(PortalSession & { portalOn: b
       contactArchived: customerContacts.archivedAt,
       shopName: tenants.name,
       shopSlug: tenants.slug,
+      previewBy: portalSessions.previewBy,
+      previewByName: users.name,
     })
     .from(portalSessions)
     .innerJoin(tenants, and(eq(tenants.id, portalSessions.tenantId), isNull(tenants.archivedAt)))
     .innerJoin(customers, and(eq(customers.tenantId, portalSessions.tenantId), eq(customers.id, portalSessions.customerId), isNull(customers.archivedAt)))
     .leftJoin(customerContacts, and(eq(customerContacts.tenantId, portalSessions.tenantId), eq(customerContacts.id, portalSessions.contactId)))
+    .leftJoin(users, and(eq(users.tenantId, portalSessions.tenantId), eq(users.id, portalSessions.previewBy)))
     // portal_sessions is looked up by the hash of the secret cookie token (like staff sessions); it carries its shop.
     .where(and(inArray(portalSessions.id, ids), gt(portalSessions.expiresAt, now)));
-  const valid = rows.filter((r) => !(r.contactId && r.contactArchived));
+  const valid = rows.filter((r) => !(r.contactId && r.contactArchived) && !(r.previewBy && !r.previewByName));
   const ordered = ids.map((id) => valid.find((r) => r.id === id)).filter((r): r is (typeof valid)[number] => Boolean(r));
   const on = new Map(await Promise.all([...new Set(ordered.map((r) => r.tenantId))].map(async (t) => [t, (await getPortalSettings(t)).enabled] as const)));
+  // Staff previews work even while the shop's portal is off, so the owner can look before turning it on.
+  const usable = (r: (typeof ordered)[number]) => Boolean(r.previewBy) || (on.get(r.tenantId) ?? false);
   // Sliding expiry + "last visit" for the active account (at most every 10 minutes).
-  const active = ordered.find((r) => on.get(r.tenantId));
+  const active = ordered.find(usable);
   const touch = active ? sessionTouch(active, now) : null;
   // tenant-scope: the session row is found by its secret token hash.
   if (active && touch) await db.update(portalSessions).set(touch).where(eq(portalSessions.id, active.id));
-  return ordered.map((r) => ({ id: r.id, tenantId: r.tenantId, customerId: r.customerId, contactId: r.contactId, email: r.email, name: r.contactName || r.customerName, customerName: r.customerName, shopName: r.shopName, shopSlug: r.shopSlug, portalOn: on.get(r.tenantId) ?? false }));
+  return ordered.map((r) => ({
+    id: r.id,
+    tenantId: r.tenantId,
+    customerId: r.customerId,
+    contactId: r.contactId,
+    email: r.email,
+    name: r.contactName || r.customerName,
+    customerName: r.customerName,
+    shopName: r.shopName,
+    shopSlug: r.shopSlug,
+    previewBy: r.previewBy && r.previewByName ? { id: r.previewBy, name: r.previewByName } : null,
+    portalOn: usable(r),
+  }));
 });
 
 /** Every portal account this browser can use (first = active). A shop that turned its portal off refuses its sessions. */
@@ -99,11 +118,15 @@ export async function assertSameOrigin() {
   if (!ok) throw new UserError("Please reload the page and try again.");
 }
 
-/** For portal Server Actions: same origin + signed in. */
+/** Message for anything a customer would do, tried during a staff preview. */
+export const PREVIEW_REFUSED = "This is a preview of what your customer sees — only the customer can do this.";
+
+/** For portal Server Actions: same origin + signed in as the customer (never during a staff preview). */
 export async function requirePortalAction(): Promise<PortalSession> {
   await assertSameOrigin();
   const s = await getPortalSession();
   if (!s) throw new UserError("You've been signed out. Please sign in again.");
+  if (s.previewBy) throw new UserError(PREVIEW_REFUSED);
   return s;
 }
 

@@ -57,6 +57,13 @@
       "when": 1790626392475,
       "tag": "0007_phase2_inventory_scheduling_portal",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790699463764,
+      "tag": "0008_portal_preview",
+      "breakpoints": true
     }
   ]
 }

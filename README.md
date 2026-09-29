@@ -90,6 +90,7 @@ One place to see and run the business: jobs, quotes, customers, production, proo
   - Customers sign in with an emailed link, no password, and everything is branded as the shop.
   - They can see their orders and status, upload artwork, approve proofs, accept or decline quotes, pay invoices online, and request reorders, quotes or send a message.
   - Staff handle requests in **Requests**, and invite customers from the customer page.
+  - Staff can't sign in to the portal with their own email (it's for customer emails). To see it as a customer does, open a customer and press **Preview portal**: a read-only view where Accept, Pay and Upload are turned off.
 - **Job number prefix** per shop (Settings → Company Profile), e.g. MP-10428 or LS-1002.
 - **Front counter extras:** starting cash in the end-of-day count, a checkout bar on phones, add a customer without leaving the page, and reprint the last receipt.
 

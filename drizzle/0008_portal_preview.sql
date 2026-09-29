@@ -1,0 +1,2 @@
+ALTER TABLE "portal_sessions" ADD COLUMN "preview_by" integer;--> statement-breakpoint
+ALTER TABLE "portal_sessions" ADD CONSTRAINT "portal_sessions_preview_by_fk" FOREIGN KEY ("tenant_id","preview_by") REFERENCES "public"."users"("tenant_id","id") ON DELETE cascade ON UPDATE no action;

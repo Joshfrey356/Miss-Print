@@ -30,6 +30,23 @@ export function PortalShell({
 }) {
   return (
     <div className="min-h-dvh bg-slate-50 print:bg-white">
+      {session.previewBy && (
+        <div className="bg-amber-100 text-amber-950 print:hidden">
+          <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-2.5 text-sm">
+            <p>
+              <strong className="font-semibold">Preview</strong> — this is what {session.customerName} sees. Buttons like Accept, Pay and Upload are turned off for you.
+            </p>
+            <span className="flex items-center gap-2">
+              <a href={`/customers/${session.customerId}`} className="rounded-md px-2 py-1 font-medium underline-offset-2 hover:underline">
+                Back to the app
+              </a>
+              <form action="/api/portal/logout" method="post">
+                <button className="rounded-md bg-amber-950 px-3 py-1 font-medium text-white hover:bg-amber-900">End preview</button>
+              </form>
+            </span>
+          </div>
+        </div>
+      )}
       <header className="border-b border-slate-200 bg-white print:hidden">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3">
           <Link href="/portal/home" className="min-w-0 shrink" aria-label={`${brand.name} — home`}>
@@ -39,7 +56,7 @@ export function PortalShell({
             <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-lg px-2 py-1.5 text-right hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
               <span className="min-w-0">
                 <span className="block max-w-[38vw] truncate text-sm font-semibold text-slate-900 sm:max-w-xs">{session.customerName}</span>
-                <span className="block max-w-[38vw] truncate text-xs text-slate-500 sm:max-w-xs">{session.email}</span>
+                <span className="block max-w-[38vw] truncate text-xs text-slate-500 sm:max-w-xs">{session.previewBy ? `Preview by ${session.previewBy.name}` : session.email}</span>
               </span>
               <ChevronDown className="size-4 shrink-0 text-slate-400 group-open:rotate-180" />
             </summary>

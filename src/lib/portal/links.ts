@@ -302,7 +302,8 @@ export async function listPortalAccess(tenantId: number, customerId: number): Pr
     db
       .select({ email: portalSessions.email, lastSeenAt: portalSessions.lastSeenAt, createdAt: portalSessions.createdAt, expiresAt: portalSessions.expiresAt })
       .from(portalSessions)
-      .where(and(eq(portalSessions.tenantId, tenantId), eq(portalSessions.customerId, customerId))),
+      // Staff previews aren't customer visits.
+      .where(and(eq(portalSessions.tenantId, tenantId), eq(portalSessions.customerId, customerId), isNull(portalSessions.previewBy))),
   ]);
   const byEmail = new Map<string, PortalAccessRow>();
   for (const l of links) {

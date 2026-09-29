@@ -315,7 +315,7 @@ async function Overview({
       </div>
       <div className="space-y-5">
         <ContactsCard customerId={id} contacts={contacts} canEdit={can.edit} />
-        <CustomerPortalCard tenantId={tenantId} customerId={id} canEdit={can.edit} />
+        <CustomerPortalCard tenantId={tenantId} customerId={id} canEdit={can.edit} canPreview={can.edit && can.money} />
         <NotesCard customerId={id} notes={notes} canEdit={can.edit} />
         {billingAddress && (
           <Card className="px-5 py-4">

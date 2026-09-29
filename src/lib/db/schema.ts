@@ -1452,10 +1452,13 @@ export const portalSessions = pgTable(
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
     ip: text("ip"),
     userAgent: text("user_agent"),
+    /** Set when a staff member opened the portal to see what this customer sees (read-only preview). */
+    previewBy: integer("preview_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     ref("portal_sessions_customer_fk", t.tenantId, t.customerId, customers).onDelete("cascade"),
+    ref("portal_sessions_preview_by_fk", t.tenantId, t.previewBy, users).onDelete("cascade"),
     ref("portal_sessions_contact_fk", t.tenantId, t.contactId, customerContacts),
     index("portal_sessions_customer_idx").on(t.tenantId, t.customerId),
   ],
